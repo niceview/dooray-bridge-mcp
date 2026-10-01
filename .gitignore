@@ -1,0 +1,23 @@
+# 실행 산출물 — 두레이 본문과 식별자가 들어 있다. 절대 커밋하지 않는다
+/logs/
+/drafts/
+/state/
+/.dev-home/
+
+# 비밀
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+/.venv/
+/dist/
+/build/
+*.egg-info/
+
+# 실측 원본 응답 — 개인정보를 지우기 전. 지운 것만 tests/fixtures/로 옮긴다
+/scratch/
+
+# OS
+.DS_Store

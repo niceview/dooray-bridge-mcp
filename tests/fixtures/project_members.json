@@ -1,0 +1,42 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": [
+    {
+      "organizationMemberId": "1000000000000000011",
+      "role": "admin"
+    },
+    {
+      "organizationMemberId": "1000000000000000012",
+      "role": "member"
+    },
+    {
+      "organizationMemberId": "1000000000000000013",
+      "role": "member"
+    },
+    {
+      "organizationMemberId": "1000000000000000014",
+      "role": "member"
+    },
+    {
+      "organizationMemberId": "1000000000000000015",
+      "role": "member"
+    },
+    {
+      "organizationMemberId": "1000000000000000003",
+      "role": "member"
+    },
+    {
+      "organizationMemberId": "1000000000000000001",
+      "role": "member"
+    },
+    {
+      "organizationMemberId": "1000000000000000016",
+      "role": "member"
+    }
+  ],
+  "totalCount": 8
+}

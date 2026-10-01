@@ -1,0 +1,33 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": {
+    "id": "1000000000000000056",
+    "post": {
+      "id": "1000000000000000026"
+    },
+    "type": "comment",
+    "subtype": "general",
+    "createdAt": "2026-09-19T00:34:38+09:00",
+    "creator": {
+      "type": "member",
+      "member": {
+        "organizationMemberId": "1000000000000000001"
+      }
+    },
+    "body": {
+      "mimeType": "text/x-markdown",
+      "content": "본문 조각 1. [링크 제목](dooray://1000000000000000052/files/1000000000000000035) "
+    },
+    "files": [
+      {
+        "id": "1000000000000000035",
+        "name": null,
+        "size": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": [
+    {
+      "id": "1000000000000000099",
+      "code": "personal",
+      "description": "",
+      "state": "active",
+      "scope": "private",
+      "type": "private",
+      "organization": {
+        "id": "1000000000000000002"
+      },
+      "wiki": {
+        "id": null
+      },
+      "drive": {
+        "id": null
+      },
+      "projectCategoryId": null
+    }
+  ],
+  "totalCount": 1
+}

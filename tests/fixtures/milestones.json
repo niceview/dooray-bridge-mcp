@@ -1,0 +1,26 @@
+{
+  "header": {
+    "isSuccessful": true,
+    "resultCode": 0,
+    "resultMessage": ""
+  },
+  "result": [
+    {
+      "id": "1000000000000000121",
+      "name": "10월 배포",
+      "status": "open",
+      "startedAt": "2026-10-01+09:00",
+      "endedAt": "2026-10-31+09:00",
+      "closedAt": null
+    },
+    {
+      "id": "1000000000000000122",
+      "name": "9월 배포",
+      "status": "closed",
+      "startedAt": "2026-09-01+09:00",
+      "endedAt": "2026-09-30+09:00",
+      "closedAt": "2026-09-30T18:00:00+09:00"
+    }
+  ],
+  "totalCount": 2
+}

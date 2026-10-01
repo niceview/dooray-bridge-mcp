@@ -1,0 +1,24 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": {
+    "id": "1000000000000000003",
+    "idProviderType": "service",
+    "idProviderUserId": "",
+    "name": "멤버2",
+    "userCode": "sample",
+    "externalEmailAddress": "user@example.com",
+    "defaultOrganization": {
+      "id": "1000000000000000002"
+    },
+    "locale": "ko_KR",
+    "timezoneName": "Asia/Seoul",
+    "englishName": null,
+    "nativeName": null,
+    "nickname": null,
+    "displayMemberId": null
+  }
+}

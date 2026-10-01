@@ -1,0 +1,22 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": [
+    {
+      "id": "1000000000000000110",
+      "name": "긴급",
+      "color": "#ff0000",
+      "tagGroup": null
+    },
+    {
+      "id": "1000000000000000111",
+      "name": "검토",
+      "color": "#00a000",
+      "tagGroup": null
+    }
+  ],
+  "totalCount": 2
+}

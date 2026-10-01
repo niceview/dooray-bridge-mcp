@@ -1,0 +1,15 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": {
+    "post": {
+      "id": "1000000000000000026"
+    },
+    "project": {
+      "id": "1000000000000000018"
+    }
+  }
+}

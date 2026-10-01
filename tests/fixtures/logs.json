@@ -1,0 +1,238 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": [
+    {
+      "id": "1000000000000000053",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-19T08:40:37+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000011"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [@그룹1](dooray://1000000000000000052/member-groups/1000000000000000019) "
+      }
+    },
+    {
+      "id": "1000000000000000054",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-19T04:57:00+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000003"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [@멤버15](dooray://1000000000000000052/members/1000000000000000011 \"member\") 본문 조각 2. [@멤버18](dooray://1000000000000000052/members/1000000000000000012 \"member\") 본문 조각 3. [@멤버18](dooray://1000000000000000052/members/1000000000000000012 \"member\") 본문 조각 4. [@멤버1](dooray://1000000000000000052/members/1000000000000000001 \"me\") 본문 조각 5. [@멤버20](dooray://1000000000000000052/members/1000000000000000014 \"member\") 본문 조각 6. [@멤버20](dooray://1000000000000000052/members/1000000000000000014 \"member\") 본문 조각 7. [@멤버15](dooray://1000000000000000052/members/1000000000000000011 \"member\") 본문 조각 8. [@멤버19](dooray://1000000000000000052/members/1000000000000000013 \"member\") 본문 조각 9. [@멤버18](dooray://1000000000000000052/members/1000000000000000012 \"member\") 본문 조각 10. [@멤버1](dooray://1000000000000000052/members/1000000000000000001 \"me\") 본문 조각 11. [@멤버18](dooray://1000000000000000052/members/1000000000000000012 \"member\") 본문 조각 12. [@멤버15](dooray://1000000000000000052/members/1000000000000000011 \"member\") "
+      }
+    },
+    {
+      "id": "1000000000000000055",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-19T03:24:28+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000003"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "멘션 없는 본문."
+      }
+    },
+    {
+      "id": "1000000000000000056",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-19T00:34:38+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000001"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [링크 제목](dooray://1000000000000000052/files/1000000000000000035) "
+      }
+    },
+    {
+      "id": "1000000000000000057",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-18T17:36:19+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000012"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "멘션 없는 본문."
+      }
+    },
+    {
+      "id": "1000000000000000058",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-18T17:33:57+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000001"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [링크 제목](dooray://1000000000000000052/files/1000000000000000036) "
+      }
+    },
+    {
+      "id": "1000000000000000059",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-18T17:03:49+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000001"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [링크 제목](dooray://1000000000000000052/files/1000000000000000037) 본문 조각 2. [@멤버16](dooray://1000000000000000052/members/1000000000000000015 \"member\") "
+      }
+    },
+    {
+      "id": "1000000000000000060",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-18T14:46:48+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000034"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [@멤버19](dooray://1000000000000000052/members/1000000000000000013 \"member\") 본문 조각 2. [@멤버18](dooray://1000000000000000052/members/1000000000000000012 \"member\") 본문 조각 3. [@멤버1](dooray://1000000000000000052/members/1000000000000000001 \"me\") 본문 조각 4. [@멤버20](dooray://1000000000000000052/members/1000000000000000014 \"member\") "
+      }
+    },
+    {
+      "id": "1000000000000000061",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-18T13:57:59+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000013"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [@멤버2](dooray://1000000000000000052/members/1000000000000000003 \"admin\") 본문 조각 2. [@멤버1](dooray://1000000000000000052/members/1000000000000000001 \"me\") "
+      }
+    },
+    {
+      "id": "1000000000000000062",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-18T12:05:51+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000011"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [@멤버29](dooray://1000000000000000052/members/1000000000000000033 \"guest\") 본문 조각 2. [@멤버24](dooray://1000000000000000052/members/1000000000000000028 \"guest\") 본문 조각 3. [@멤버26](dooray://1000000000000000052/members/1000000000000000030 \"member\") 본문 조각 4. [@멤버25](dooray://1000000000000000052/members/1000000000000000029 \"guest\") "
+      }
+    },
+    {
+      "id": "1000000000000000063",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-18T11:09:42+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000013"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [@멤버1](dooray://1000000000000000052/members/1000000000000000001 \"me\") 본문 조각 2. [@멤버15](dooray://1000000000000000052/members/1000000000000000011 \"member\") "
+      }
+    },
+    {
+      "id": "1000000000000000064",
+      "post": {
+        "id": "1000000000000000026"
+      },
+      "type": "comment",
+      "subtype": "general",
+      "createdAt": "2026-09-04T05:26:35+09:00",
+      "creator": {
+        "type": "member",
+        "member": {
+          "organizationMemberId": "1000000000000000003"
+        }
+      },
+      "body": {
+        "mimeType": "text/x-markdown",
+        "content": "본문 조각 1. [링크 제목](dooray://1000000000000000052/tasks/1000000000000000065 \"working\") "
+      }
+    }
+  ],
+  "totalCount": 69
+}

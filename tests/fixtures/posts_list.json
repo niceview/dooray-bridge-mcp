@@ -1,0 +1,615 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": [
+    {
+      "id": "1000000000000000021",
+      "subject": "업무 제목",
+      "project": {
+        "id": "1000000000000000018",
+        "code": "sample",
+        "projectCategoryId": null
+      },
+      "taskNumber": "sample/16",
+      "closed": false,
+      "createdAt": "2026-09-19T06:14:19Z",
+      "dueDateFlag": true,
+      "updatedAt": "2026-09-19T06:49:32Z",
+      "number": 16,
+      "priority": "none",
+      "tags": [],
+      "users": {
+        "from": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000012",
+            "name": "멤버18"
+          }
+        },
+        "to": [
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000012",
+              "name": "멤버18"
+            },
+            "workflow": {
+              "id": "1000000000000000008",
+              "name": "멤버3"
+            }
+          }
+        ],
+        "cc": [
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000022",
+              "name": "멤버21"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000003",
+              "name": "멤버2"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000023",
+              "name": "멤버22"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000001",
+              "name": "멤버1"
+            }
+          }
+        ]
+      },
+      "fileIdList": [
+        "1000000000000000024"
+      ],
+      "workflowClass": "registered",
+      "milestone": null,
+      "workflow": {
+        "id": "1000000000000000008",
+        "name": "멤버3"
+      }
+    },
+    {
+      "id": "1000000000000000025",
+      "subject": "업무 제목",
+      "project": {
+        "id": "1000000000000000018",
+        "code": "sample",
+        "projectCategoryId": null
+      },
+      "taskNumber": "sample/6",
+      "closed": false,
+      "createdAt": "2026-09-03T04:38:48Z",
+      "dueDateFlag": true,
+      "updatedAt": "2026-09-19T05:14:15Z",
+      "number": 6,
+      "priority": "none",
+      "parent": {
+        "id": "1000000000000000026",
+        "number": 5,
+        "subject": "업무 제목"
+      },
+      "tags": [],
+      "users": {
+        "from": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000012",
+            "name": "멤버18"
+          }
+        },
+        "to": [
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000012",
+              "name": "멤버18"
+            },
+            "workflow": {
+              "id": "1000000000000000009",
+              "name": "멤버7"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000014",
+              "name": "멤버20"
+            },
+            "workflow": {
+              "id": "1000000000000000009",
+              "name": "멤버7"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000001",
+              "name": "멤버1"
+            },
+            "workflow": {
+              "id": "1000000000000000009",
+              "name": "멤버7"
+            }
+          }
+        ],
+        "cc": [
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000013",
+              "name": "멤버19"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000011",
+              "name": "멤버15"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000003",
+              "name": "멤버2"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000027",
+              "name": "멤버23"
+            }
+          }
+        ]
+      },
+      "fileIdList": [],
+      "workflowClass": "working",
+      "milestone": null,
+      "workflow": {
+        "id": "1000000000000000009",
+        "name": "멤버7"
+      }
+    },
+    {
+      "id": "1000000000000000026",
+      "subject": "업무 제목",
+      "project": {
+        "id": "1000000000000000018",
+        "code": "sample",
+        "projectCategoryId": null
+      },
+      "taskNumber": "sample/5",
+      "closed": false,
+      "createdAt": "2026-08-28T01:55:11Z",
+      "dueDate": "2026-09-02T15:00:00Z",
+      "dueDateFlag": true,
+      "updatedAt": "2026-09-19T00:21:46Z",
+      "number": 5,
+      "priority": "highest",
+      "tags": [],
+      "users": {
+        "from": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000003",
+            "name": "멤버2"
+          }
+        },
+        "to": [
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000012",
+              "name": "멤버18"
+            },
+            "workflow": {
+              "id": "1000000000000000009",
+              "name": "멤버7"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000013",
+              "name": "멤버19"
+            },
+            "workflow": {
+              "id": "1000000000000000009",
+              "name": "멤버7"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000014",
+              "name": "멤버20"
+            },
+            "workflow": {
+              "id": "1000000000000000009",
+              "name": "멤버7"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000001",
+              "name": "멤버1"
+            },
+            "workflow": {
+              "id": "1000000000000000009",
+              "name": "멤버7"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000011",
+              "name": "멤버15"
+            },
+            "workflow": {
+              "id": "1000000000000000009",
+              "name": "멤버7"
+            }
+          }
+        ],
+        "cc": [
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000027",
+              "name": "멤버23"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000015",
+              "name": "멤버16"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000003",
+              "name": "멤버2"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000028",
+              "name": "멤버24"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000029",
+              "name": "멤버25"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000030",
+              "name": "멤버26"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000031",
+              "name": "멤버27"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000032",
+              "name": "멤버28"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000033",
+              "name": "멤버29"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000034",
+              "name": "멤버30"
+            }
+          },
+          {
+            "type": "group",
+            "group": {
+              "projectMemberGroupId": "1000000000000000019",
+              "code": "sample",
+              "members": [
+                {
+                  "organizationMemberId": "1000000000000000015",
+                  "name": "멤버16"
+                },
+                {
+                  "organizationMemberId": "1000000000000000003",
+                  "name": "멤버2"
+                }
+              ]
+            }
+          },
+          {
+            "type": "group",
+            "group": {
+              "projectMemberGroupId": "1000000000000000017",
+              "code": "sample",
+              "members": [
+                {
+                  "organizationMemberId": "1000000000000000015",
+                  "name": "멤버16"
+                },
+                {
+                  "organizationMemberId": "1000000000000000003",
+                  "name": "멤버2"
+                },
+                {
+                  "organizationMemberId": "1000000000000000016",
+                  "name": "멤버17"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "startedAt": "2026-08-27T15:00:00Z",
+      "fileIdList": [
+        "1000000000000000035",
+        "1000000000000000036",
+        "1000000000000000037",
+        "1000000000000000038",
+        "1000000000000000039"
+      ],
+      "workflowClass": "working",
+      "milestone": null,
+      "workflow": {
+        "id": "1000000000000000009",
+        "name": "멤버7"
+      },
+      "estimatedDays": 5
+    },
+    {
+      "id": "1000000000000000040",
+      "subject": "업무 제목",
+      "project": {
+        "id": "1000000000000000018",
+        "code": "sample",
+        "projectCategoryId": null
+      },
+      "taskNumber": "sample/15",
+      "closed": false,
+      "createdAt": "2026-09-18T19:36:05Z",
+      "dueDateFlag": true,
+      "updatedAt": "2026-09-18T19:37:55Z",
+      "number": 15,
+      "priority": "highest",
+      "parent": {
+        "id": "1000000000000000026",
+        "number": 5,
+        "subject": "업무 제목"
+      },
+      "tags": [],
+      "users": {
+        "from": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000003",
+            "name": "멤버2"
+          }
+        },
+        "to": [
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000012",
+              "name": "멤버18"
+            },
+            "workflow": {
+              "id": "1000000000000000008",
+              "name": "멤버3"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000014",
+              "name": "멤버20"
+            },
+            "workflow": {
+              "id": "1000000000000000008",
+              "name": "멤버3"
+            }
+          }
+        ],
+        "cc": [
+          {
+            "type": "group",
+            "group": {
+              "projectMemberGroupId": "1000000000000000017",
+              "code": "sample",
+              "members": [
+                {
+                  "organizationMemberId": "1000000000000000013",
+                  "name": "멤버19"
+                },
+                {
+                  "organizationMemberId": "1000000000000000015",
+                  "name": "멤버16"
+                },
+                {
+                  "organizationMemberId": "1000000000000000011",
+                  "name": "멤버15"
+                },
+                {
+                  "organizationMemberId": "1000000000000000003",
+                  "name": "멤버2"
+                },
+                {
+                  "organizationMemberId": "1000000000000000001",
+                  "name": "멤버1"
+                },
+                {
+                  "organizationMemberId": "1000000000000000016",
+                  "name": "멤버17"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "fileIdList": [],
+      "workflowClass": "registered",
+      "milestone": null,
+      "workflow": {
+        "id": "1000000000000000008",
+        "name": "멤버3"
+      }
+    },
+    {
+      "id": "1000000000000000041",
+      "subject": "업무 제목",
+      "project": {
+        "id": "1000000000000000018",
+        "code": "sample",
+        "projectCategoryId": null
+      },
+      "taskNumber": "sample/9",
+      "closed": true,
+      "createdAt": "2026-08-24T05:17:58Z",
+      "dueDateFlag": true,
+      "updatedAt": "2026-09-16T03:24:56Z",
+      "number": 9,
+      "priority": "none",
+      "tags": [],
+      "users": {
+        "from": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000013",
+            "name": "멤버19"
+          }
+        },
+        "to": [
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000013",
+              "name": "멤버19"
+            },
+            "workflow": {
+              "id": "1000000000000000010",
+              "name": "멤버11"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000011",
+              "name": "멤버15"
+            },
+            "workflow": {
+              "id": "1000000000000000010",
+              "name": "멤버11"
+            }
+          }
+        ],
+        "cc": [
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000014",
+              "name": "멤버20"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000015",
+              "name": "멤버16"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000003",
+              "name": "멤버2"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000042",
+              "name": "멤버31"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000043",
+              "name": "멤버32"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000001",
+              "name": "멤버1"
+            }
+          },
+          {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000027",
+              "name": "멤버23"
+            }
+          }
+        ]
+      },
+      "endedAt": "2026-09-16T03:24:56Z",
+      "fileIdList": [
+        "1000000000000000044",
+        "1000000000000000045",
+        "1000000000000000046",
+        "1000000000000000047",
+        "1000000000000000048",
+        "1000000000000000049",
+        "1000000000000000050",
+        "1000000000000000051"
+      ],
+      "workflowClass": "closed",
+      "milestone": null,
+      "workflow": {
+        "id": "1000000000000000010",
+        "name": "멤버11"
+      }
+    }
+  ],
+  "totalCount": 14
+}

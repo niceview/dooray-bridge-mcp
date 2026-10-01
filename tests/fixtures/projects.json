@@ -1,0 +1,64 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": [
+    {
+      "id": "1000000000000000004",
+      "code": "sample",
+      "description": "",
+      "state": "active",
+      "scope": "private",
+      "type": "public",
+      "organization": {
+        "id": "1000000000000000002"
+      },
+      "wiki": {
+        "id": null
+      },
+      "drive": {
+        "id": null
+      },
+      "projectCategoryId": null
+    },
+    {
+      "id": "1000000000000000005",
+      "code": "sample",
+      "description": "",
+      "state": "active",
+      "scope": "private",
+      "type": "public",
+      "organization": {
+        "id": "1000000000000000002"
+      },
+      "wiki": {
+        "id": "1000000000000000006"
+      },
+      "drive": {
+        "id": null
+      },
+      "projectCategoryId": null
+    },
+    {
+      "id": "1000000000000000007",
+      "code": "sample",
+      "description": "",
+      "state": "active",
+      "scope": "public",
+      "type": "public",
+      "organization": {
+        "id": "1000000000000000002"
+      },
+      "wiki": {
+        "id": null
+      },
+      "drive": {
+        "id": null
+      },
+      "projectCategoryId": null
+    }
+  ],
+  "totalCount": 21
+}

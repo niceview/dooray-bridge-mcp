@@ -1,0 +1,11 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": {
+    "id": "1000000000000000101",
+    "milestone": null
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "manifest_version": "0.4",
+  "name": "dooray-bridge",
+  "display_name": "Dooray Bridge",
+  "version": "0.3.5",
+  "description": "두레이 공식 API로 업무와 댓글을 읽습니다. 두레이에 쓰는 일은 네 가지(댓글 등록, 내 개인 프로젝트에 업무 만들기, 상위 업무 지정, 업무·댓글 고치기)입니다. 허락 창이 뜨는 조건은 SECURITY.md를 보세요.",
+  "author": { "name": "niceview" },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/niceview/dooray-bridge-mcp" },
+  "support": "https://github.com/niceview/dooray-bridge-mcp/issues",
+  "server": {
+    "type": "uv",
+    "entry_point": "src/mcp_server/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "--frozen", "dooray-mcp"],
+      "env": {
+        "DOORAY_API_TOKEN": "${user_config.api_token}",
+        "DOORAY_WEB_BASE": "${user_config.web_base}",
+        "DOORAY_ENABLE_WRITE": "1"
+      }
+    }
+  },
+  "user_config": {
+    "api_token": {
+      "type": "string",
+      "title": "두레이 개인 인증 토큰",
+      "description": "두레이 개인설정 > API > 개인 인증 토큰에서 발급한 값을 붙여 넣으세요. Claude Desktop이 암호화해서 이 컴퓨터에 저장합니다.",
+      "sensitive": true,
+      "required": true
+    },
+    "web_base": {
+      "type": "string",
+      "title": "두레이 웹 주소",
+      "description": "브라우저에서 두레이를 열었을 때 주소창의 앞부분입니다. 예: https://회사이름.dooray.com",
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32"],
+    "runtimes": { "python": ">=3.14" }
+  },
+  "tools": [
+    { "name": "whoami", "description": "내 이름·멤버 ID·접근 가능한 프로젝트 수" },
+    { "name": "list_projects", "description": "내가 속한 프로젝트 목록" },
+    { "name": "search_posts", "description": "업무 검색(담당자·상태·태그·기간·키워드)" },
+    { "name": "get_thread", "description": "업무 한 건의 본문과 댓글" },
+    { "name": "project_digest", "description": "프로젝트의 최근 변경분" },
+    { "name": "workload_summary", "description": "담당자별·상태별 집계와 지연 업무" },
+    { "name": "list_my_mentions", "description": "나를 멘션한 댓글" },
+    { "name": "list_my_comments", "description": "내가 쓴 최근 댓글(말투 뽑기용)" },
+    { "name": "set_reply_style", "description": "답변 말투를 이 컴퓨터에 저장(두레이로 보내지 않음)" },
+    { "name": "guide", "description": "일의 순서와 보여 주는 모양 안내(두레이를 읽지도 쓰지도 않음)" },
+    { "name": "post_comment", "description": "업무에 댓글 등록 — 쓰기" },
+    { "name": "create_my_post", "description": "내 개인 프로젝트에 업무 만들기 — 쓰기" },
+    { "name": "set_parent_post", "description": "상위 업무 지정·해제 — 쓰기" },
+    { "name": "edit_comment", "description": "댓글 한 곳 고치기 — 쓰기" },
+    { "name": "edit_post", "description": "업무 제목·본문 고치기 — 쓰기" },
+    { "name": "set_post_people", "description": "담당·참조 넣고 빼기 — 쓰기(알림이 갈 수 있음)" },
+    { "name": "set_post_fields", "description": "마감·태그·마일스톤·우선순위 — 쓰기" },
+    { "name": "set_post_status", "description": "상태 바꾸기·완료 처리 — 쓰기" }
+  ],
+  "keywords": ["dooray", "두레이"]
+}

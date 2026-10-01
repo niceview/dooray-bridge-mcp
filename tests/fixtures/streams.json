@@ -1,0 +1,300 @@
+{
+  "header": {
+    "isSuccessful": true,
+    "resultCode": 0,
+    "resultMessage": ""
+  },
+  "result": [
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000301",
+        "type": "event",
+        "postId": "1000000000000000026",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000200",
+            "name": "멤버30"
+          }
+        },
+        "body": {
+          "mimeType": null,
+          "content": "시스템 이벤트"
+        },
+        "createdAt": "2026-09-19T22:10:00+09:00",
+        "updatedAt": "2026-09-19T22:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000302",
+        "type": "comment",
+        "postId": "1000000000000000026",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000200",
+            "name": "멤버30"
+          }
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "댓글 본문 2"
+        },
+        "createdAt": "2026-09-19T21:10:00+09:00",
+        "updatedAt": "2026-09-19T21:10:00+09:00"
+      }
+    },
+    {
+      "type": "post",
+      "post": {
+        "read": true,
+        "id": "1000000000000000026",
+        "projectId": "1000000000000000018",
+        "subject": "업무 제목",
+        "users": {
+          "from": {
+            "type": "member",
+            "member": {
+              "organizationMemberId": "1000000000000000001",
+              "name": "멤버1"
+            }
+          },
+          "to": [],
+          "cc": []
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "업무 본문"
+        },
+        "createdAt": "2026-09-18T09:00:00+09:00",
+        "updatedAt": "2026-09-18T09:00:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000303",
+        "type": "comment",
+        "postId": "1000000000000000027",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000201",
+            "name": "멤버31"
+          }
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "댓글 본문 3"
+        },
+        "createdAt": "2026-09-18T20:10:00+09:00",
+        "updatedAt": "2026-09-18T20:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000304",
+        "type": "comment",
+        "postId": "1000000000000000027",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000202",
+            "name": "멤버32"
+          }
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "댓글 본문 4"
+        },
+        "createdAt": "2026-09-18T19:10:00+09:00",
+        "updatedAt": "2026-09-18T19:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000305",
+        "type": "comment",
+        "postId": "1000000000000000028",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000203",
+            "name": "멤버33"
+          }
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "댓글 본문 5 [@멤버30](dooray://1000000000000000052/members/1000000000000000200 \"member\") [@멤버1](dooray://1000000000000000052/members/1000000000000000001 \"me\")"
+        },
+        "createdAt": "2026-09-18T18:10:00+09:00",
+        "updatedAt": "2026-09-18T18:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000306",
+        "type": "comment",
+        "postId": "1000000000000000026",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000001",
+            "name": "멤버1"
+          }
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "댓글 본문 6"
+        },
+        "createdAt": "2026-09-17T17:10:00+09:00",
+        "updatedAt": "2026-09-17T17:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000307",
+        "type": "comment",
+        "postId": "1000000000000000027",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000001",
+            "name": "멤버1"
+          }
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "댓글 본문 7 [@멤버34](dooray://1000000000000000052/members/1000000000000000204 \"member\")"
+        },
+        "createdAt": "2026-09-17T16:10:00+09:00",
+        "updatedAt": "2026-09-17T16:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000308",
+        "type": "comment",
+        "postId": "1000000000000000028",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000205",
+            "name": "멤버35"
+          }
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "댓글 본문 8 [@그룹1](dooray://1000000000000000052/member-groups/1000000000000000019 \"member-group\")"
+        },
+        "createdAt": "2026-09-17T15:10:00+09:00",
+        "updatedAt": "2026-09-17T15:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000309",
+        "type": "comment",
+        "postId": "1000000000000000026",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000200",
+            "name": "멤버30"
+          }
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "댓글 본문 9 [@멤버1](dooray://1000000000000000052/members/1000000000000000001 \"me\")"
+        },
+        "createdAt": "2026-09-16T14:10:00+09:00",
+        "updatedAt": "2026-09-16T14:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000310",
+        "type": "comment",
+        "postId": "1000000000000000028",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000200",
+            "name": "멤버30"
+          }
+        },
+        "body": {
+          "mimeType": "text/x-markdown",
+          "content": "댓글 본문 10 [@멤버35](dooray://1000000000000000052/members/1000000000000000205 \"member\") [@멤버36](dooray://1000000000000000052/members/1000000000000000206 \"member\") [@멤버36](dooray://1000000000000000052/members/1000000000000000206 \"member\")"
+        },
+        "createdAt": "2026-09-16T13:10:00+09:00",
+        "updatedAt": "2026-09-16T13:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000311",
+        "type": "event",
+        "postId": "1000000000000000027",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000200",
+            "name": "멤버30"
+          }
+        },
+        "body": {
+          "mimeType": null,
+          "content": "시스템 이벤트"
+        },
+        "createdAt": "2026-09-16T12:10:00+09:00",
+        "updatedAt": "2026-09-16T12:10:00+09:00"
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "read": true,
+        "id": "1000000000000000312",
+        "type": "comment",
+        "postId": "1000000000000000028",
+        "creator": {
+          "type": "member",
+          "member": {
+            "organizationMemberId": "1000000000000000200",
+            "name": "멤버30"
+          }
+        },
+        "body": {
+          "mimeType": "text/html",
+          "content": "<div>html 댓글 본문</div><div><br></div><div>앞<a class=\"mention-member role-member\" data-dooray-href=\"dooray://1000000000000000052/members/1000000000000000001\" data-id=\"1000000000000000001\" title=\"member\">@멤버1</a>뒤</div>"
+        },
+        "createdAt": "2026-09-15T11:10:00+09:00",
+        "updatedAt": "2026-09-15T11:10:00+09:00"
+      }
+    }
+  ],
+  "cursor": "1781768002000000000"
+}

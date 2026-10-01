@@ -1,0 +1,82 @@
+{
+  "header": {
+    "resultCode": 0,
+    "resultMessage": "",
+    "isSuccessful": true
+  },
+  "result": [
+    {
+      "id": "1000000000000000008",
+      "name": "멤버3",
+      "order": 100,
+      "names": [
+        {
+          "locale": "ja_JP",
+          "name": "멤버4"
+        },
+        {
+          "locale": "zh_CN",
+          "name": "멤버5"
+        },
+        {
+          "locale": "ko_KR",
+          "name": "멤버3"
+        },
+        {
+          "locale": "en_US",
+          "name": "멤버6"
+        }
+      ],
+      "class": "registered"
+    },
+    {
+      "id": "1000000000000000009",
+      "name": "멤버7",
+      "order": 200,
+      "names": [
+        {
+          "locale": "zh_CN",
+          "name": "멤버8"
+        },
+        {
+          "locale": "ko_KR",
+          "name": "멤버7"
+        },
+        {
+          "locale": "en_US",
+          "name": "멤버9"
+        },
+        {
+          "locale": "ja_JP",
+          "name": "멤버10"
+        }
+      ],
+      "class": "working"
+    },
+    {
+      "id": "1000000000000000010",
+      "name": "멤버11",
+      "order": 400,
+      "names": [
+        {
+          "locale": "en_US",
+          "name": "멤버12"
+        },
+        {
+          "locale": "ja_JP",
+          "name": "멤버13"
+        },
+        {
+          "locale": "ko_KR",
+          "name": "멤버11"
+        },
+        {
+          "locale": "zh_CN",
+          "name": "멤버14"
+        }
+      ],
+      "class": "closed"
+    }
+  ],
+  "totalCount": 3
+}
