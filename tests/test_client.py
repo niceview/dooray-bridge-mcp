@@ -1800,6 +1800,38 @@ class ParseOthersTest(CoreTestCase):
             [tag.group for tag in map(models.parse_tag, load_fixture("tags")["result"])], [None, None]
         )
 
+    def test_TG_1_the_tag_group_id_mandatory_and_select_one_are_read(self) -> None:
+        # 020 spec §2-3 — 필수 태그 그룹 판정의 재료. JSON 불리언 true만 참이다.
+        tag = models.parse_tag(
+            {
+                "id": "6",
+                "name": "급함",
+                "tagGroup": {"id": "7", "name": "우선순위", "mandatory": True, "selectOne": True},
+            }
+        )
+        self.assertEqual((tag.group_id, tag.mandatory, tag.select_one), ("7", True, True))
+        for group in (
+            {"id": "7", "mandatory": "true", "selectOne": "true"},
+            {"id": "7", "mandatory": 1, "selectOne": 1},
+            {"id": "7"},
+        ):
+            with self.subTest(group=group):
+                parsed = models.parse_tag({"id": "1", "name": "x", "tagGroup": group})
+                self.assertEqual(parsed.group_id, "7")
+                self.assertIs(parsed.mandatory, False)
+                self.assertIs(parsed.select_one, False)
+        for raw in ({}, {"tagGroup": None}, {"tagGroup": "문자열"}):
+            with self.subTest(raw=raw):
+                parsed = models.parse_tag({"id": "1", "name": "x", **raw})
+                self.assertEqual((parsed.group_id, parsed.mandatory, parsed.select_one), (None, False, False))
+        self.assertEqual(
+            [
+                (tag.group_id, tag.mandatory, tag.select_one)
+                for tag in map(models.parse_tag, load_fixture("tags")["result"])
+            ],
+            [(None, False, False), (None, False, False)],
+        )
+
 
 class ParsePageTest(CoreTestCase):
     def test_D6_a_string_total_count_becomes_an_int(self) -> None:

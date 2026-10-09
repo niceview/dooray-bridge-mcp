@@ -75,7 +75,7 @@ claude mcp add -s user dooray-bridge -e DOORAY_WEB_BASE=https://회사이름.doo
 ## 6. 등록 시험
 
 - **헤드리스 시험은 읽기와 "쓰기 전에 멈춤"까지다.** 방법의 정본은 `CLAUDE.md` "환경 특성"의 헤드리스 문단이다.
-- **쓰기 도구는 헤드리스(`dontAsk`)에서 거절된다.** 쓰기 도구 여덟과 `set_reply_style`에 "매번 허락" 표시가 붙어 있기 때문이다(ADR 009). 허용 목록에 넣어도 거절되고 서버에 닿지 않는다(005 M8 실측).
+- **쓰기 도구는 헤드리스(`dontAsk`)에서 거절된다.** 쓰기 도구 아홉과 `set_reply_style`에 "매번 허락" 표시가 붙어 있기 때문이다(ADR 009). 허용 목록에 넣어도 거절되고 서버에 닿지 않는다(005 M8 실측).
 - **쓰기 호출 시험은 사람이 허락 창을 누른다.** 실제 쓰기는 지정된 시험 업무에만 한다.
 - **표시가 살아 있는지는 쓰기 없는 탐침으로 본다**: `set_parent_post`에 옮길 업무와 상위 업무를 **같은 업무**로 준다. 허락하면 서버가 대상을 읽은 뒤 "옮길 업무와 상위 업무가 같습니다."로 돌아오고 쓰기 요청은 0회다.
   확인: 그날 감사 로그에 `set_parent_post` 도구 줄이 있고, `"method": "POST"`인 줄이 없다. 거절했다면 도구 줄도 없다.
@@ -138,7 +138,7 @@ DOORAY_ENABLE_WRITE = "1"
 - **토큰은 적지 않는다.** 서버가 키체인(3절)에서 읽는다. 셸의 환경변수를 넘기는 `env_vars`도 필요 없다.
 - Codex는 "매번 허락" 표시(`anthropic/requiresUserInteraction`)를 모른다. 도구 승인 설정이 그 자리다.
   - `default_tools_approval_mode`·`tools.<도구>.approval_mode`의 값은 `auto`·`prompt`·`writes`·`approve`다.
-  - 문서가 뜻을 풀어 적은 것은 `writes` 하나다: 읽기 전용 표시가 없는 도구에 묻는다. 우리 쓰기 도구 여덟과 `set_reply_style`에는 읽기 전용 표시가 없고, 읽기 아홉(`guide` 포함)에는 있다.
+  - 문서가 뜻을 풀어 적은 것은 `writes` 하나다: 읽기 전용 표시가 없는 도구에 묻는다. 우리 쓰기 도구 아홉과 `set_reply_style`에는 읽기 전용 표시가 없고, 읽기 아홉(`guide` 포함)에는 있다.
   - `writes`가 **매번** 묻는지, `prompt`·`approve`가 무슨 뜻인지는 문서에서 확인하지 못했다.
 - 읽기 전용으로 쓰려면 `DOORAY_ENABLE_WRITE` 줄을 뺀다.
 

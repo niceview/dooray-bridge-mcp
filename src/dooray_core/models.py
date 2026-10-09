@@ -186,6 +186,9 @@ class Tag:
     name: str
     color: str | None
     group: str | None = None  # 태그 그룹 이름. 그룹이 없으면 None (api-notes: `tagGroup{id,name,…}|null`)
+    group_id: str | None = None  # 태그 그룹 ID (020)
+    mandatory: bool = False  # 업무를 만들 때 이 그룹의 태그가 하나 이상 있어야 한다. JSON true일 때만 (020)
+    select_one: bool = False  # 이 그룹에서는 하나만 고른다. JSON true일 때만 (020)
 
 
 @dataclass(frozen=True)
@@ -382,11 +385,16 @@ def _feed_item(data: object) -> tuple[str, dict]:
 
 def parse_tag(data: object) -> Tag:
     raw = _as_dict(data)
+    group = _as_dict(raw.get("tagGroup"))
     return Tag(
         id=_id(raw.get("id")),
         name=_id(raw.get("name")),
         color=_text(raw.get("color")),
-        group=_text(_as_dict(raw.get("tagGroup")).get("name")),
+        group=_text(group.get("name")),
+        group_id=_text(group.get("id")),
+        # 문자열 "true"·숫자 1은 거짓이다 — `_flag`와 같은 엄격함 (020 spec §2-3).
+        mandatory=group.get("mandatory") is True,
+        select_one=group.get("selectOne") is True,
     )
 
 

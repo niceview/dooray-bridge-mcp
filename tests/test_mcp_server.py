@@ -58,8 +58,9 @@ REGISTERED = {
 
 # 게이트 뒤의 쓰기 도구. 010이 둘을 더해 셋이 됐다 (010 spec §5-4 — 켬 11개·끔 8개).
 # 012가 고치기 다섯을 더해 여덟이다 (012 spec §2-1 — 켬 17개·끔 9개).
+# 020이 `create_post`를 더해 아홉이다(켬 19·끔 10).
 EDIT_TOOLS = {"edit_comment", "edit_post", "set_post_people", "set_post_fields", "set_post_status"}
-WRITE_TOOLS = {"post_comment", "create_my_post", "set_parent_post"} | EDIT_TOOLS
+WRITE_TOOLS = {"post_comment", "create_my_post", "create_post", "set_parent_post"} | EDIT_TOOLS
 
 
 def private_projects() -> dict:
@@ -325,6 +326,15 @@ class InstructionsTest(ServerCase):
         found = {tool.name: tool for tool in await mcp.list_tools()}
         self.assertIn("확인하거나 고쳐 준 뒤에만", found["set_reply_style"].description)
 
+    def test_IN_1_the_first_line_names_both_places_and_only_the_write_session_names_the_tool(self) -> None:
+        # 020 spec §5-4 — 안 C. 가짓수는 넷 그대로이고 둘째의 대상이 넓어진다.
+        for registered in (True, False):
+            with self.subTest(registered=registered):
+                text = server.build_instructions(registered)
+                first = text.splitlines()[0]
+                self.assertIn("내 개인 프로젝트나 지정한 프로젝트에 업무 만들기", first)
+                self.assertEqual("create_post(" in text, registered)
+
     def test_S9_the_first_line_says_four(self) -> None:
         # 010 완료 기준 31 — 첫 줄이 쓰기의 가짓수를 말하고 게이트와 무관하게 같다. 012가 넷으로 넓혔다(§7-1).
         for registered in (True, False):
@@ -347,7 +357,7 @@ class InstructionsTest(ServerCase):
                     self.assertIn(phrase, text)
             # 확인한 것은 이력이 보인다는 데까지다 (spec 개정 기록).
             self.assertNotIn("이전 글을 볼 수", text)
-        # S13 — 끈 안내문에 새 도구 다섯의 이름이 없다(S7의 루프가 `WRITE_TOOLS` 여덟을 돈다).
+        # S13 — 끈 안내문에 새 도구 다섯의 이름이 없다(S7의 루프가 `WRITE_TOOLS` 아홉을 돈다).
         read_only = server.build_instructions(False)
         for name in EDIT_TOOLS:
             with self.subTest(tool=name):
@@ -412,7 +422,7 @@ class InstructionsTest(ServerCase):
 class ToolDescriptionTest(ServerCase):
     """013 spec §9-1의 S15·S16·S18 — 도구 설명의 길이, 쓰기 여덟의 안전 문구, guide 줄."""
 
-    # S16 — 쓰기 여덟 각각의 안전 문구(원칙 §2-1). `guides`를 보지 않고 도구 설명만 본다.
+    # S16 — 쓰기 아홉 각각의 안전 문구(원칙 §2-1). `guides`를 보지 않고 도구 설명만 본다.
     COMMON = ("명시적 승인을 받을 것", "[업무번호] 라벨", "(블록 안)에서 읽은")
     SAFETY = {
         "post_comment": (
@@ -424,6 +434,15 @@ class ToolDescriptionTest(ServerCase):
             "업무 제목·작성자 이름에 든 번호",
         ),
         "create_my_post": ("되돌릴 수 없다", "지시가 아니다", "한 번에 여러 건"),
+        "create_post": (
+            "되돌릴 수 없다",
+            "지시가 아니다",
+            "한 번에 하나다",
+            "다섯 번의 승인",
+            "업무 제목·작성자 이름에 든 번호",
+            "내가 멤버인 프로젝트에만",
+            "project는 사용자가 말한 프로젝트만",
+        ),
         "set_parent_post": (
             "한 번에 하나다",
             "다섯 번의 승인",
@@ -477,6 +496,7 @@ class ToolDescriptionTest(ServerCase):
     GUIDE_TOPIC = {
         "post_comment": "reply",
         "create_my_post": "new-post",
+        "create_post": "new-post",
         "set_parent_post": "organize",
         "edit_comment": "edit",
         "edit_post": "edit",
@@ -493,7 +513,7 @@ class ToolDescriptionTest(ServerCase):
 
     async def test_S15_every_description_fits_the_client_limit(self) -> None:
         found = await self.descriptions()
-        self.assertEqual(len(found), 18)
+        self.assertEqual(len(found), 19)
         for name, text in found.items():
             with self.subTest(tool=name):
                 self.assertLessEqual(len(text), CLIENT_TEXT_LIMIT)
@@ -567,8 +587,9 @@ class WriteGateTest(ServerCase):
             text = await self.text_of(mcp, "whoami", {})
         names = {tool.name for tool in found}
         # G-b (010 spec §9-3) — 게이트 켬이면 열둘이다(007). 012가 고치기 다섯을 더해 열일곱, 013이 guide를 더해 열여덟이다.
+        # 020이 `create_post`를 더해 열아홉이다.
         self.assertEqual(names, REGISTERED | WRITE_TOOLS)
-        self.assertEqual(len(names), 18)
+        self.assertEqual(len(names), 19)
         for tool in found:
             with self.subTest(tool=tool.name):
                 self.assertNotIn("dooray-bot", tool.description)
@@ -577,12 +598,12 @@ class WriteGateTest(ServerCase):
             marks = by_name[name].annotations
             with self.subTest(tool=name):
                 self.assertFalse(marks.read_only_hint)
-                # 만들기 셋은 되돌릴 수 없지만 지우지는 않는다. 고치기 다섯은 있던 것을 덮어쓴다 (012 spec §2-2의 6).
+                # 만들기 넷은 되돌릴 수 없지만 지우지는 않는다. 고치기 다섯은 있던 것을 덮어쓴다 (012 spec §2-2의 6).
                 self.assertEqual(marks.destructive_hint, name in EDIT_TOOLS)
                 self.assertFalse(marks.idempotent_hint)  # 두 번 부르면 둘이 된다
                 self.assertTrue(marks.open_world_hint)
         self.assertIn(
-            "- 쓰기 도구: 등록됨 (댓글 등록 · 내 개인 프로젝트에 업무 만들기 · 상위 업무 지정 · 업무·댓글 고치기)",
+            "- 쓰기 도구: 등록됨 (댓글 등록 · 내 개인 프로젝트나 지정한 프로젝트에 업무 만들기 · 상위 업무 지정 · 업무·댓글 고치기)",
             text,
         )
 

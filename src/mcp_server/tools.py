@@ -79,6 +79,9 @@ project는 **내가 멤버인 프로젝트와, 최근 활동에서 내 업무가
 공개 프로젝트는 여기서 "없는 프로젝트"가 된다 — 그런 프로젝트의 업무는 postId를 알면 get_thread로
 직접 읽을 수 있다.
 
+parent를 주면 그 업무의 하위 업무만 본다. 업무 번호(sample/5)나 postId로 주고, **project와 함께만** 준다 —
+parent는 project 안의 업무여야 한다. 예: project="sample", parent="sample/5". status를 주지 않으면 닫힌 하위 업무도 온다.
+
 **멈춘 업무**는 stale_days로 찾는다: stale_days=14면 14일 넘게 갱신되지 않은 업무만 온다(댓글이
 달려도 갱신이다). status를 주지 않으면 열린 업무(backlog, registered, working)만 본다.
 "내가 담당인데 2주 넘게 멈춘 업무"는 assignee="me", stale_days=14 **한 번**이면 된다 — project 없이
@@ -535,7 +538,7 @@ def _web_line(web_base: str | None) -> str:
 def _write_line() -> str:
     # 게이트 환경변수를 여기서 다시 읽지 않는다. 등록 시점에 한 번 정해진 값을 읽는다 (§6-1).
     if runtime.WRITE_TOOLS_REGISTERED:
-        return "- 쓰기 도구: 등록됨 (댓글 등록 · 내 개인 프로젝트에 업무 만들기 · 상위 업무 지정 · 업무·댓글 고치기)"
+        return "- 쓰기 도구: 등록됨 (댓글 등록 · 내 개인 프로젝트나 지정한 프로젝트에 업무 만들기 · 상위 업무 지정 · 업무·댓글 고치기)"
     return "- 쓰기 도구: 등록되지 않음 (읽기 전용)"
 
 
@@ -653,6 +656,14 @@ SINCE_AND_STALE_MESSAGE = (
 STATUS_NOT_FOUND = '"{name}"이라는 상태가 이 프로젝트에 없습니다. 있는 상태: {known}'
 TAG_NOT_FOUND = '"{name}"이라는 태그가 이 프로젝트에 없습니다.'
 MILESTONE_NOT_FOUND = '"{name}"이라는 마일스톤이 이 프로젝트에 없습니다.'
+# 하위 업무 찾기 (020 spec §2-6). 넣은 값을 되풀이하지 않는다 — `{label}`은 서버가 읽은 업무 번호다.
+PARENT_NEEDS_PROJECT = (
+    "parent는 project와 함께만 받습니다 — 하위 업무를 그 프로젝트 안에서 찾습니다. "
+    "project에 프로젝트 이름이나 ID를 주세요."
+)
+PARENT_NOT_IN_PROJECT = (
+    "parent로 준 업무 [{label}]은 project로 준 프로젝트의 업무가 아닙니다. 아무것도 찾지 않았습니다."
+)
 
 
 def search_posts(
@@ -666,6 +677,7 @@ def search_posts(
     page: int = 0,
     size: int = runtime.LIST_SIZE_DEFAULT,
     stale_days: int | None = None,
+    parent: str | None = None,
 ) -> str:
     with runtime.tool_call("search_posts") as call:
         # 검사가 먼저다. 범위 밖이면 요청이 한 번도 나가지 않는다 (완료 기준 33).
@@ -683,6 +695,7 @@ def search_posts(
         keyword = runtime.check_text(
             keyword, name="keyword", limit=runtime.NAME_ARG_LIMIT
         )
+        parent = runtime.check_text(parent, name="parent", limit=runtime.POST_ARG_LIMIT)
         page = runtime.check_int(page, name="page", low=0, high=runtime.PAGE_MAX)
         size = runtime.check_int(size, name="size", low=1, high=runtime.LIST_SIZE_MAX)
         classes = _as_classes(status)
@@ -698,6 +711,9 @@ def search_posts(
                 # "멈춘 업무"는 열린 업무를 뜻한다. 닫힌 업무는 전부 멈춰 있다 (등록 시험 점검 1).
                 classes = OPEN_CLASSES
         if project is None:
+            # 하위 업무는 그 프로젝트 안에서 찾는다 (020 spec §2-6).
+            if parent is not None:
+                raise runtime.ToolError(PARENT_NEEDS_PROJECT)
             # 프로젝트마다 다른 ID라 해석 호출이 프로젝트 수만큼 곱해진다 (§6-3의 4).
             if tag or milestone or (status is not None and classes is None):
                 raise runtime.ToolError(NEEDS_PROJECT_MESSAGE)
@@ -719,6 +735,7 @@ def search_posts(
         if answer is not None:
             return answer  # 동명이인·0건. 업무 목록을 부르지 않는다 (완료 기준 48)
 
+        parent_post: Post | None = None
         if project is not None:
             projects, chosen = _projects_matching(reader, project, warnings, personal=True)
             if not chosen:
@@ -736,8 +753,17 @@ def search_posts(
             narrowed = _narrowed(reader, target, status=status, tag=tag, milestone=milestone)
             if isinstance(narrowed, str):
                 return narrowed
+            if parent is not None:
+                # 읽기의 해석 그대로다. 쿼리에 싣는 것은 조회로 얻은 ID뿐이다 — 넣은 문자열이 아니다.
+                above = _post_by_reference(reader, parent, warnings)
+                if isinstance(above, str):
+                    return above
+                if above.project_id != target.id:
+                    return PARENT_NOT_IN_PROJECT.format(label=render.inline_safe(above.task_number))
+                parent_post = above
             posts, info = reader.posts(
                 target.id,
+                parent_post_id=None if parent_post is None else parent_post.id,
                 to_member_ids=(member_id,) if member_id else (),
                 workflow_classes=classes or (),
                 workflow_ids=narrowed["workflow_ids"],
@@ -780,6 +806,7 @@ def search_posts(
             keyword=keyword,
             since_at=since_at,
             stale_days=stale_days,
+            parent_label=None if parent_post is None else parent_post.task_number,
         )
         if not posts:
             return "\n".join([SEARCH_EMPTY.format(where=conditions), *view.warn(warnings)])
@@ -1007,9 +1034,12 @@ def _conditions(
     keyword: str | None,
     since_at: datetime | None,
     stale_days: int | None = None,
+    parent_label: str | None = None,
 ) -> str:
     """머리 줄의 조건 표기. 전부 블록 밖이라 사용자 문자열은 `inline_safe`를 거친다."""
     parts = [where]
+    if parent_label is not None:
+        parts.append(f"상위 [{render.inline_safe(parent_label)}]")
     if stale_days is not None:
         # 기본으로 건 조건(열린 업무)도 적는다 — 말없이 좁히지 않는다.
         opened = "" if status else f", 열린 업무({', '.join(OPEN_CLASSES)})"

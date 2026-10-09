@@ -44,6 +44,7 @@ from test_mcp_tools import (
     hong_thread_routes,
     personal_row,
     personal_routes,
+    project_json,
     project_page,
 )
 
@@ -1262,15 +1263,15 @@ class NewToolGateTest(ServerCase):
         mcp = self.build(write=False)
         names = {tool.name for tool in await mcp.list_tools()}
         self.assertEqual(len(names), 10)  # 007: list_my_comments, 013: guide
-        for missing in ("create_my_post", "set_parent_post"):
+        for missing in ("create_my_post", "create_post", "set_parent_post"):
             with self.subTest(tool=missing):
                 self.assertNotIn(missing, names)
 
-    async def test_G_b_the_gate_on_registers_eighteen(self) -> None:
+    async def test_G_b_the_gate_on_registers_nineteen(self) -> None:
         with mock.patch.dict(os.environ, {"DOORAY_ENABLE_WRITE": "1"}):
             mcp = self.build(write=True)
             found = await mcp.list_tools()
-        self.assertEqual(len(found), 18)  # 007: list_my_comments, 012: 고치기 다섯, 013: guide
+        self.assertEqual(len(found), 19)  # 007: list_my_comments, 012: 고치기 다섯, 013: guide, 020: create_post
         by_name = {tool.name: tool for tool in found}
         self.assertEqual(set(by_name) & WRITE_TOOLS, WRITE_TOOLS)
         for name in WRITE_TOOLS:
@@ -3758,6 +3759,12 @@ class PersonalCodeFallbackWriteTest(WriteCase):
                 {"subject": SUBJECT, "body": BODY, "parent": "hong.gd/5"},
                 True,
             ),
+            # 020 CP-25 — 프로젝트는 @가 있어 찾는다. 상위(@ 없음)에서 멈춘다.
+            (
+                "create_post",
+                {"project": HONG_CODE, "subject": SUBJECT, "body": BODY, "parent": "hong.gd/5"},
+                False,
+            ),
         )
         for name, arguments, create in cases:
             with self.subTest(tool=name, arguments=arguments):
@@ -4186,6 +4193,632 @@ class NewWriteLinkTest(EditCase):
                 self.assertTrue(message.endswith(write_tools.LINKED_TASK_AT_LABEL), message)
                 self.assertEqual(transport.requests, [])
                 self.assertEqual(len(self.writers), 0)
+
+
+
+# --- 020: 지정한 프로젝트에 업무 만들기 ---------------------------------------
+
+
+def team_tag(
+    tag_id: str,
+    name: str,
+    group: str | None = None,
+    *,
+    group_id: str | None = None,
+    mandatory: bool = False,
+    select_one: bool = False,
+) -> dict:
+    """태그 목록의 원소 하나. `group`이 없으면 `tagGroup: null`이다."""
+    row: dict = {"id": tag_id, "name": name, "color": "#000000", "tagGroup": None}
+    if group is not None or group_id is not None:
+        row["tagGroup"] = {
+            "id": group_id or f"g-{group}",
+            "name": group,
+            "mandatory": mandatory,
+            "selectOne": select_one,
+        }
+    return row
+
+
+def team_tag_list(*rows: dict) -> list[models.Tag]:
+    return [models.parse_tag(row) for row in rows]
+
+
+class TeamTagsTest(unittest.TestCase):
+    """TG-2 — `_team_tags`는 순수하다. CP-10~CP-14의 판정이 요청 없이 같다 (020 spec §2-3)."""
+
+    def test_TG_2_no_tags_in_the_project(self) -> None:
+        self.assertEqual(write_tools._team_tags([], ["검토"]), write_tools.TEAM_TAGS_EMPTY)
+        self.assertEqual(write_tools._team_tags([], []), [])
+
+    def test_TG_2_a_missing_name_lists_what_is_there(self) -> None:
+        available = team_tag_list(team_tag("1", "검토"), team_tag("2", "긴급"))
+        found = write_tools._team_tags(available, ["없는태그"])
+        self.assertIsInstance(found, str)
+        self.assertTrue(
+            found.startswith(write_tools.TEAM_TAG_NOT_FOUND.format(name="없는태그")), found
+        )
+        self.assertIn(write_tools.TAG_AVAILABLE.format(names="검토, 긴급"), found)
+
+    def test_TG_2_the_same_name_in_two_groups_is_not_chosen(self) -> None:
+        available = team_tag_list(
+            team_tag("1", "검토", "단계", group_id="g1"), team_tag("2", "검토", "종류", group_id="g2")
+        )
+        found = write_tools._team_tags(available, ["검토"])
+        self.assertEqual(
+            found,
+            write_tools.CREATE_TAG_AMBIGUOUS.format(name="검토", count=2, groups="단계, 종류"),
+        )
+
+    def test_TG_2_a_mandatory_group_needs_one_of_its_tags(self) -> None:
+        available = team_tag_list(
+            team_tag("1", "기획", "단계", group_id="g1", mandatory=True),
+            team_tag("2", "개발", "단계", group_id="g1", mandatory=True),
+            team_tag("3", "검토"),
+        )
+        for wanted in ([], ["검토"]):
+            with self.subTest(wanted=wanted):
+                found = write_tools._team_tags(available, wanted)
+                self.assertEqual(
+                    found,
+                    "\n".join(
+                        [
+                            write_tools.MANDATORY_TAG_MISSING.format(group="단계"),
+                            write_tools.MANDATORY_TAG_CHOICES.format(names="기획, 개발"),
+                            write_tools.MANDATORY_TAG_NEXT,
+                        ]
+                    ),
+                )
+        chosen = write_tools._team_tags(available, ["개발", "검토"])
+        self.assertEqual([tag.id for tag in chosen], ["2", "3"])
+
+    def test_TG_2_an_unnamed_mandatory_group(self) -> None:
+        available = team_tag_list(team_tag("1", "기획", None, group_id="g1", mandatory=True))
+        found = write_tools._team_tags(available, [])
+        self.assertIn(
+            write_tools.MANDATORY_TAG_MISSING.format(group=write_tools.UNNAMED_TAG_GROUP), found
+        )
+
+    def test_TG_2_a_tag_without_a_group_does_not_pass_an_unnamed_mandatory_group(self) -> None:
+        # 리뷰 L2 — 그룹 없는 태그와 ID·이름이 모두 없는 필수 그룹이 같은 키로 묶이지 않는다.
+        rows = [team_tag("1", "검토")]
+        unnamed = team_tag("2", "기획", None, group_id="g1", mandatory=True)
+        unnamed["tagGroup"] = {"mandatory": True, "selectOne": False}  # ID도 이름도 없다
+        available = team_tag_list(*rows, unnamed)
+        for wanted in ([], ["검토"]):
+            with self.subTest(wanted=wanted):
+                found = write_tools._team_tags(available, wanted)
+                self.assertEqual(
+                    found,
+                    "\n".join(
+                        [
+                            write_tools.MANDATORY_TAG_MISSING.format(group=write_tools.UNNAMED_TAG_GROUP),
+                            write_tools.MANDATORY_TAG_CHOICES.format(names="기획"),
+                            write_tools.MANDATORY_TAG_NEXT,
+                        ]
+                    ),
+                )
+        # 그룹 없는 태그는 이름 있는 필수 그룹의 후보에도 섞이지 않는다.
+        named = team_tag_list(team_tag("1", "검토"), team_tag("3", "기획", "단계", mandatory=True))
+        self.assertIn(
+            write_tools.MANDATORY_TAG_CHOICES.format(names="기획"),
+            write_tools._team_tags(named, ["검토"]),
+        )
+
+    def test_TG_2_the_choices_say_how_many_were_left_out(self) -> None:
+        # 리뷰 L3 — 이름은 `MAX_TAGS`에서 자르고 "외 N개"를 붙인다.
+        rows = [
+            team_tag(str(n), f"태그{n:02d}", "단계", group_id="g1", mandatory=True)
+            for n in range(runtime.MAX_TAGS + 1)
+        ]
+        found = write_tools._team_tags(team_tag_list(*rows), [])
+        shown = ", ".join(f"태그{n:02d}" for n in range(runtime.MAX_TAGS))
+        self.assertIn(
+            write_tools.MANDATORY_TAG_CHOICES.format(
+                names=shown + write_tools.MANDATORY_TAG_MORE.format(count=1)
+            ),
+            found.splitlines(),
+        )
+        self.assertNotIn(f"태그{runtime.MAX_TAGS:02d}", found)
+
+    def test_TG_2_the_shown_groups_are_capped(self) -> None:
+        rows = [
+            team_tag(str(n), f"태그{n}", f"그룹{n}", group_id=f"g{n}", mandatory=True)
+            for n in range(write_tools.MANDATORY_GROUPS_SHOWN + 2)
+        ]
+        found = write_tools._team_tags(team_tag_list(*rows), [])
+        self.assertEqual(found.count("그룹의 태그가 있어야 합니다"), write_tools.MANDATORY_GROUPS_SHOWN)
+        self.assertTrue(found.endswith(write_tools.MANDATORY_TAG_NEXT))
+
+    def test_TG_2_a_select_one_group_takes_one(self) -> None:
+        available = team_tag_list(
+            team_tag("1", "높음", "중요도", group_id="g1", select_one=True),
+            team_tag("2", "낮음", "중요도", group_id="g1", select_one=True),
+        )
+        self.assertEqual(
+            write_tools._team_tags(available, ["높음", "낮음"]),
+            write_tools.SELECT_ONE_TOO_MANY.format(group="중요도"),
+        )
+        self.assertEqual([tag.id for tag in write_tools._team_tags(available, ["낮음"])], ["2"])
+
+    def test_TG_2_no_mandatory_group_and_no_tags_chooses_nothing(self) -> None:
+        available = team_tag_list(team_tag("1", "검토"))
+        self.assertEqual(write_tools._team_tags(available, []), [])
+        self.assertEqual([tag.id for tag in write_tools._team_tags(available, ["검토"])], ["1"])
+
+    def test_TG_2_the_field_tool_sentence_is_unchanged(self) -> None:
+        # `head=`의 기본값이 지금 문장이다 — `set_post_fields`는 그대로다.
+        available = team_tag_list(team_tag("1", "검토", "단계"), team_tag("2", "검토", "종류"))
+        self.assertTrue(
+            write_tools._tag_ambiguous("검토", available).startswith('"검토"이라는 태그가 이 프로젝트에 2개입니다')
+        )
+        self.assertIn("두레이 화면에서 바꿔 주세요", write_tools._tag_ambiguous("검토", available))
+
+
+TEAM_PID = "1000000000000000160"  # 팀 프로젝트 `sample` (멤버)
+TEAM_PARENT = "1000000000000000161"  # sample/271 — 상위 없음
+TEAM_CHILD = "1000000000000000162"  # sample/272 — 상위(271) 있음
+OTHER_TEAM_PID = "1000000000000000163"  # 팀 프로젝트 `other` (멤버)
+TWIN_PID = "1000000000000000164"  # code `sample`, 비멤버 — 활동에서 보인 프로젝트 (CP-7b)
+OTHER_TEAM_POST = "1000000000000000165"  # other/5
+TEAM_CREATE = f"{PROJECTS}/{TEAM_PID}/posts"  # GET(번호 조회)과 POST(생성)가 같은 경로다
+TEAM_TAGS = f"{PROJECTS}/{TEAM_PID}/tags"
+TEAM_NEW_DETAIL = f"{TEAM_CREATE}/{NEW_POST_ID}"
+TEAM_PARENT_DETAIL = f"{TEAM_CREATE}/{TEAM_PARENT}"
+TEAM_PARENT_BARE = f"/project/v1/posts/{TEAM_PARENT}"
+TEAM_CHILD_BARE = f"/project/v1/posts/{TEAM_CHILD}"
+REVIEW_TAG = "1000000000000000170"  # 검토
+URGENT_TAG = "1000000000000000171"  # 긴급
+STAGE_PLAN = "1000000000000000172"  # 단계 그룹(필수): 기획
+STAGE_BUILD = "1000000000000000173"  # 단계 그룹(필수): 개발
+TEAM_MEMBERS = [project_json(TEAM_PID, "sample"), project_json(OTHER_TEAM_PID, "other")]
+
+
+def team_routes(
+    extra: dict | None = None,
+    *,
+    members: list[dict] | None = None,
+    private: list[dict] | None = None,
+    tags: list[dict] | None = None,
+) -> dict:
+    """지정한 프로젝트에 만드는 길: 프로젝트 목록(2) → 태그(1) → 생성 → 만든 업무 단건.
+
+    목록 응답은 [팀 목록, 개인 목록] 순이다(`personal_routes`의 모양). 있는 장치는 바꾸지 않는다.
+    """
+    rows = [] if tags is None else tags
+    routes = personal_routes(
+        members=TEAM_MEMBERS if members is None else members,
+        private=[personal_row(MINE, "personal")] if private is None else private,
+    )
+    routes[("GET", TEAM_TAGS)] = (200, reply(rows, total=len(rows)), None)
+    routes[("POST", TEAM_CREATE)] = (200, load_fixture("post_created"), None)
+    routes[("GET", TEAM_NEW_DETAIL)] = (
+        200,
+        reply(post_json(273, post_id=NEW_POST_ID, subject=SUBJECT, project_id=TEAM_PID, code="sample")),
+        None,
+    )
+    routes.update(extra or {})
+    return routes
+
+
+def team_parent_routes() -> dict:
+    """상위 `sample/271`을 번호로도 postId로도 찾는 길."""
+    parent = reply(post_json(271, post_id=TEAM_PARENT, project_id=TEAM_PID, code="sample"))
+    return {
+        ("GET", TEAM_CREATE): (
+            200,
+            reply([post_json(271, post_id=TEAM_PARENT, project_id=TEAM_PID)], total=1),
+            None,
+        ),
+        ("GET", TEAM_PARENT_DETAIL): (200, parent, None),
+        ("GET", TEAM_PARENT_BARE): (200, parent, None),
+    }
+
+
+class CreatePostTest(EditCase):
+    """020 spec §7-1의 CP-1~CP-24·CP-7b. CP-25는 `PersonalCodeFallbackWriteTest`의 PF-10에 있다."""
+
+    def paths(self, transport) -> list[tuple[str, str]]:
+        return [(row.method, row.url.path) for row in transport.requests]
+
+    async def create(self, routes: dict, **arguments: str):
+        return await self.run_tool(
+            "create_post", {"project": "sample", "subject": SUBJECT, "body": BODY, **arguments}, routes
+        )
+
+    def assertNoTeamWrite(self, transport) -> None:
+        self.assertNotIn(("POST", TEAM_CREATE), self.paths(transport))
+        self.assertNothingWritten(transport)
+
+    async def test_CP_1_one_write_to_the_named_project(self) -> None:
+        secret = "이-본문은-반환에-없어야-한다-2071"
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": WEB_BASE}):
+            transport, text = await self.create(team_routes(), body=secret)
+        self.assertEqual(
+            self.paths(transport),
+            [
+                ("GET", PROJECTS),
+                ("GET", PROJECTS),
+                ("GET", TEAM_TAGS),
+                ("POST", TEAM_CREATE),
+                ("GET", TEAM_NEW_DETAIL),
+            ],
+        )
+        sent = self.sent(transport)
+        self.assertEqual(
+            sent, {"subject": SUBJECT, "body": {"mimeType": "text/x-markdown", "content": secret}}
+        )
+        self.assertTrue(text.startswith(write_tools.CREATED), text)
+        self.assertIn(f"- 업무: [sample/273] {SUBJECT}", text)
+        self.assertIn("- 프로젝트: sample", text.splitlines())
+        self.assertNotIn("내 개인 프로젝트", text)
+        self.assertIn(f"- 업무 링크: {WEB_BASE}/project/tasks/{NEW_POST_ID}", text)
+        self.assertNotIn(secret, text)
+
+    async def test_CP_2_a_parent_in_the_same_project(self) -> None:
+        for parent in ("sample/271", TEAM_PARENT):
+            with self.subTest(parent=parent):
+                self.writers.clear()
+                transport, text = await self.create(team_routes(team_parent_routes()), parent=parent)
+                self.assertEqual(self.sent(transport)["parentPostId"], TEAM_PARENT)
+                self.assertIn("- 상위 업무: [sample/271] 업무 제목", text)
+                # 상위 검사가 태그보다 먼저다 (spec §2-4).
+                paths = self.paths(transport)
+                self.assertLess(paths.index(("GET", TEAM_PARENT_DETAIL if "/" in parent else TEAM_PARENT_BARE)), paths.index(("GET", TEAM_TAGS)))
+        number_lookup = [
+            row for row in transport.requests if row.method == "GET" and row.url.path == TEAM_CREATE
+        ]
+        self.assertEqual(number_lookup, [])  # postId로 줬을 때는 번호 조회가 없다
+
+    async def test_CP_3_a_parent_in_another_project_writes_nothing(self) -> None:
+        mine = reply(post_json(108, post_id=PARENT_ID, project_id=MINE, code="personal"))
+        other = reply(post_json(5, post_id=OTHER_TEAM_POST, project_id=OTHER_TEAM_PID, code="other"))
+        extra = {
+            ("GET", CREATE): (200, reply([post_json(108, post_id=PARENT_ID, project_id=MINE)], total=1), None),
+            ("GET", f"{CREATE}/{PARENT_ID}"): (200, mine, None),
+            ("GET", posts_path(OTHER_TEAM_PID)): (
+                200,
+                reply([post_json(5, post_id=OTHER_TEAM_POST, project_id=OTHER_TEAM_PID)], total=1),
+                None,
+            ),
+            ("GET", f"{posts_path(OTHER_TEAM_PID)}/{OTHER_TEAM_POST}"): (200, other, None),
+            ("GET", f"/project/v1/posts/{OTHER_TEAM_POST}"): (200, other, None),
+        }
+        for parent, label in (
+            ("personal/108", "personal/108"),
+            ("other/5", "other/5"),
+            (OTHER_TEAM_POST, "other/5"),
+        ):
+            with self.subTest(parent=parent):
+                self.writers.clear()
+                transport, text = await self.create(team_routes(extra), parent=parent)
+                self.assertEqual(
+                    text, write_tools.PARENT_OTHER_PROJECT.format(label=label, code="sample")
+                )
+                self.assertNoTeamWrite(transport)
+                self.assertNotIn(("GET", TEAM_TAGS), self.paths(transport))
+
+    async def test_CP_4_a_parent_that_already_has_a_parent_writes_nothing(self) -> None:
+        child = child_json(
+            272,
+            post_id=TEAM_CHILD,
+            project_id=TEAM_PID,
+            code="sample",
+            parent_id=TEAM_PARENT,
+            parent_number=271,
+        )
+        routes = team_routes({("GET", TEAM_CHILD_BARE): (200, reply(child), None)})
+        transport, text = await self.create(routes, parent=TEAM_CHILD)
+        self.assertEqual(
+            text, write_tools.PARENT_HAS_PARENT.format(label="sample/272", grand="sample/271")
+        )
+        self.assertNoTeamWrite(transport)
+
+    async def test_CP_5_an_unknown_project_is_not_guessed(self) -> None:
+        # 개인 목록이 `@hong.gd`다 — `@` 없는 `hong.gd`를 짐작할 대상이 있다. 짐작하면 표에 없는 경로로 간다.
+        routes = team_routes(private=[personal_row(HONG_PID, HONG_CODE)])
+        transport, text = await self.run_tool(
+            "create_post", {"project": "hong.gd", "subject": SUBJECT, "body": BODY}, routes
+        )
+        self.assertIn(tools.PROJECT_NOT_FOUND.format(name="hong.gd"), text)
+        self.assertIn(tools.PERSONAL_CODE_HINT, text)
+        self.assertNotIn(tools.PERSONAL_CODE_USED.split("{", 1)[0], text)
+        self.assertEqual(text.splitlines()[-1], write_tools.PROJECT_CONFIRM_FIRST)
+        self.assertIn(f"| other | {OTHER_TEAM_PID} |", text)  # 후보는 멤버 프로젝트
+        self.assertEqual(self.paths(transport), [("GET", PROJECTS), ("GET", PROJECTS)])
+        self.assertNothingWritten(transport)
+        self.assertTrue(self.tool_line()["ok"])
+
+    async def test_CP_6_two_member_projects_with_the_same_name_write_nothing(self) -> None:
+        transport, text = await self.create(team_routes(members=load_fixture("projects")["result"]))
+        self.assertTrue(
+            text.startswith(write_tools.PROJECT_AMBIGUOUS_CREATE.format(count=3)), text
+        )
+        self.assertIn(f"| sample | {PID} |", text)
+        self.assertEqual(text.splitlines()[-1], write_tools.PROJECT_CONFIRM_FIRST)  # 리뷰 L1
+        self.assertEqual(self.paths(transport), [("GET", PROJECTS), ("GET", PROJECTS)])
+        self.assertNothingWritten(transport)
+
+    async def test_CP_7_a_project_seen_only_in_activity_is_refused(self) -> None:
+        client.save_known_projects(
+            [models.parse_project(row) for row in TEAM_MEMBERS],
+            seen=[models.parse_project({"id": BODY_PID, "code": SEEN_CODE})],
+        )
+        for project in (SEEN_CODE, BODY_PID):
+            with self.subTest(project=project):
+                self.writers.clear()
+                transport, text = await self.create(team_routes(), project=project)
+                self.assertEqual(text, write_tools.PROJECT_NOT_MEMBER.format(code=SEEN_CODE))
+                self.assertEqual(self.paths(transport), [("GET", PROJECTS), ("GET", PROJECTS)])
+                self.assertNothingWritten(transport)
+        # 못 찾았을 때의 후보 표에도 그 프로젝트가 없다.
+        self.writers.clear()
+        _, text = await self.create(team_routes(), project="없는프로젝트")
+        self.assertNotIn(SEEN_CODE, text)
+        self.assertNotIn(BODY_PID, text)
+
+    async def test_CP_7b_membership_is_judged_by_id_before_counting(self) -> None:
+        client.save_known_projects(
+            [models.parse_project(row) for row in TEAM_MEMBERS],
+            seen=[models.parse_project({"id": TWIN_PID, "code": "sample"})],
+        )
+        transport, text = await self.create(team_routes(), project=TWIN_PID)
+        self.assertEqual(text, write_tools.PROJECT_NOT_MEMBER.format(code="sample"))
+        self.assertNothingWritten(transport)
+        # 이름으로 주면 멤버 쪽 하나로 걸러져 그 ID에 만든다 — "모호"로 멈추지 않는다.
+        self.writers.clear()
+        transport, text = await self.create(team_routes())
+        self.assertEqual(self.writes(transport)[0].url.path, TEAM_CREATE)
+        self.assertNotIn(TWIN_PID, "".join(row.url.path for row in transport.requests))
+
+    async def test_CP_8_a_bent_project_never_reaches_a_path(self) -> None:
+        for project in ("10/posts/20/set-done?x=", "..", "sample/../x"):
+            with self.subTest(project=project):
+                self.writers.clear()
+                transport, text = await self.create(team_routes(), project=project)
+                self.assertTrue(text.startswith('"'), text)
+                self.assertIn("프로젝트를 찾지 못했습니다", text)
+                self.assertEqual(self.paths(transport), [("GET", PROJECTS), ("GET", PROJECTS)])
+                self.assertNothingWritten(transport)
+
+    async def test_CP_9_tags_are_read_from_the_named_project_only(self) -> None:
+        tags = [team_tag(REVIEW_TAG, "검토"), team_tag(URGENT_TAG, "긴급")]
+        transport, text = await self.create(team_routes(tags=tags), tags="검토")
+        tag_reads = [row.url.path for row in transport.requests if row.url.path.endswith("/tags")]
+        self.assertEqual(tag_reads, [TEAM_TAGS])
+        self.assertEqual(self.sent(transport)["tagIds"], [REVIEW_TAG])
+        self.assertIn("- 태그: 검토", text)
+
+    async def test_CP_10_an_unknown_tag_or_an_empty_list_writes_nothing(self) -> None:
+        tags = [team_tag(REVIEW_TAG, "검토"), team_tag(URGENT_TAG, "긴급")]
+        transport, text = await self.create(team_routes(tags=tags), tags="없는태그")
+        self.assertIn(write_tools.TEAM_TAG_NOT_FOUND.format(name="없는태그"), text)
+        self.assertIn(write_tools.TAG_AVAILABLE.format(names="검토, 긴급"), text)
+        self.assertNoTeamWrite(transport)
+        self.writers.clear()
+        transport, text = await self.create(team_routes(), tags="검토")
+        self.assertEqual(text, write_tools.TEAM_TAGS_EMPTY)
+        self.assertNoTeamWrite(transport)
+
+    async def test_CP_11_the_same_tag_name_in_two_groups_writes_nothing(self) -> None:
+        tags = [
+            team_tag(REVIEW_TAG, "검토", "단계", group_id="g1"),
+            team_tag(URGENT_TAG, "검토", "종류", group_id="g2"),
+        ]
+        transport, text = await self.create(team_routes(tags=tags), tags="검토")
+        self.assertEqual(
+            text, write_tools.CREATE_TAG_AMBIGUOUS.format(name="검토", count=2, groups="단계, 종류")
+        )
+        self.assertNoTeamWrite(transport)
+
+    async def test_CP_12_a_mandatory_group_needs_one_of_its_tags(self) -> None:
+        tags = [
+            team_tag(STAGE_PLAN, "기획", "단계", group_id="g1", mandatory=True),
+            team_tag(STAGE_BUILD, "개발", "단계", group_id="g1", mandatory=True),
+            team_tag(REVIEW_TAG, "검토"),
+        ]
+        transport, text = await self.create(team_routes(tags=tags))
+        self.assertEqual(
+            text.splitlines(),
+            [
+                write_tools.MANDATORY_TAG_MISSING.format(group="단계"),
+                write_tools.MANDATORY_TAG_CHOICES.format(names="기획, 개발"),
+                write_tools.MANDATORY_TAG_NEXT,
+            ],
+        )
+        self.assertNoTeamWrite(transport)
+        self.writers.clear()
+        transport, text = await self.create(team_routes(tags=tags), tags="개발")
+        self.assertEqual(self.sent(transport)["tagIds"], [STAGE_BUILD])
+        self.assertTrue(text.startswith(write_tools.CREATED), text)
+
+    async def test_CP_13_two_tags_from_a_select_one_group_write_nothing(self) -> None:
+        tags = [
+            team_tag(STAGE_PLAN, "높음", "중요도", group_id="g1", select_one=True),
+            team_tag(STAGE_BUILD, "낮음", "중요도", group_id="g1", select_one=True),
+        ]
+        transport, text = await self.create(team_routes(tags=tags), tags="높음, 낮음")
+        self.assertEqual(text, write_tools.SELECT_ONE_TOO_MANY.format(group="중요도"))
+        self.assertNoTeamWrite(transport)
+
+    async def test_CP_14_the_tag_list_is_read_even_without_tags(self) -> None:
+        transport, _ = await self.create(team_routes(tags=[team_tag(REVIEW_TAG, "검토")]))
+        self.assertEqual(self.paths(transport).count(("GET", TEAM_TAGS)), 1)
+        self.assertNotIn("tagIds", self.sent(transport))
+
+    async def test_CP_15_argument_checks_come_first(self) -> None:
+        cases = [
+            ({"project": ""}, runtime.TEXT_REQUIRED_MESSAGE.format(name="project")),
+            (
+                {"project": "가" * (runtime.PROJECT_ARG_LIMIT + 1)},
+                runtime.TEXT_TOO_LONG_MESSAGE.format(name="project", limit=runtime.PROJECT_ARG_LIMIT),
+            ),
+            ({"due": "2026-09-30T18:00:00"}, write_tools.DUE_NAIVE),
+            ({"tags": ",".join(f"태그{n}" for n in range(11))}, write_tools.TAGS_TOO_MANY),
+            ({"subject": "   "}, runtime.TEXT_REQUIRED_MESSAGE.format(name="subject")),
+            ({"subject": "첫 줄\n둘째 줄"}, write_tools.SUBJECT_ONE_LINE),
+            ({"subject": "제목\x07"}, write_tools.SUBJECT_ONE_LINE),
+            ({"subject": "제목\u2028이어서"}, write_tools.SUBJECT_ONE_LINE),
+            ({"subject": "제목\n"}, write_tools.SUBJECT_ONE_LINE),
+            ({"body": f"[x](dooray://{TENANT}/tasks/{LINKED_ID})"}, write_tools.DOORAY_ADDRESS_IN_POST),
+            ({"body": f"[@홍길동]({LINKED_WEB})"}, write_tools.LINKED_TASK_AT_LABEL),
+        ]
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            for changed, sentence in cases:
+                with self.subTest(changed=changed):
+                    self.writers.clear()
+                    arguments = {"project": "sample", "subject": SUBJECT, "body": BODY, **changed}
+                    transport, message = await self.refused("create_post", arguments, team_routes())
+                    self.assertTrue(message.endswith(sentence), message)
+                    self.assertEqual(transport.requests, [])
+                    self.assertEqual(len(self.writers), 0)
+
+    async def test_CP_16_a_400_or_a_403(self) -> None:
+        payload = load_fixture("error_400")
+        transport, text = await self.create(team_routes({("POST", TEAM_CREATE): (400, payload, None)}))
+        self.assertEqual(text, write_tools.CREATE_REFUSED)
+        message = payload.get("header", {}).get("resultMessage")
+        if message:
+            self.assertNotIn(message, text)
+        line = self.tool_line()
+        self.assertFalse(line["ok"])
+        self.assertEqual(line["error"], "ApiError")
+        self.writers.clear()
+        routes = team_routes({("POST", TEAM_CREATE): (403, {"header": {}}, None)})
+        transport, message = await self.refused(
+            "create_post", {"project": "sample", "subject": SUBJECT, "body": BODY}, routes
+        )
+        self.assertTrue(message.endswith(errors.FORBIDDEN_MESSAGE), message)
+        self.assertNotIn(("GET", TEAM_NEW_DETAIL), self.paths(transport))
+
+    async def test_CP_17_a_failed_lookup_still_names_the_project(self) -> None:
+        missing = (404, load_fixture("error_404"), None)
+        _, text = await self.create(team_routes({("GET", TEAM_NEW_DETAIL): missing}))
+        lines = text.splitlines()
+        self.assertEqual(lines[0], write_tools.CREATED_UNVERIFIED.format(id=NEW_POST_ID))
+        self.assertEqual(lines[1], "- 프로젝트: sample")
+        self.writers.clear()
+        _, text = await self.run_tool(
+            "create_my_post",
+            {"subject": SUBJECT, "body": BODY},
+            create_routes({("GET", NEW_DETAIL): missing}),
+        )
+        lines = text.splitlines()
+        self.assertEqual(lines[0], write_tools.CREATED_UNVERIFIED.format(id=NEW_POST_ID))
+        self.assertEqual(lines[1], "- 프로젝트: 내 개인 프로젝트(personal)")
+
+    async def test_CP_18_a_task_web_link_becomes_a_dooray_task_link(self) -> None:
+        extra = {
+            ("GET", STREAMS): (200, load_fixture("streams"), None),
+            ("GET", LINKED_BARE): (200, detail_with(id=LINKED_ID), None),
+        }
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            transport, text = await self.create(
+                team_routes(extra), body=f"배경\n\n참고 [sample/7]({LINKED_WEB})"
+            )
+            self.assertEqual(
+                self.paths(transport),
+                [
+                    ("GET", PROJECTS),
+                    ("GET", PROJECTS),
+                    ("GET", TEAM_TAGS),
+                    ("GET", STREAMS),
+                    ("GET", LINKED_BARE),
+                    ("POST", TEAM_CREATE),
+                    ("GET", TEAM_NEW_DETAIL),
+                ],
+            )
+            self.assertEqual(self.sent(transport)["body"]["content"], f"배경\n\n참고 {LINKED_LINK}")
+            lines = text.splitlines()
+            done = lines.index(write_tools.TASK_LINKS_DONE.format(count=1))
+            self.assertEqual(lines[done + 1], f"- 업무 링크: {EXAMPLE_WEB}/project/tasks/{NEW_POST_ID}")
+            self.writers.clear()
+            transport, _ = await self.create(team_routes(extra), body="업무 번호 sample/7 참고")
+            self.assertNotIn(("GET", STREAMS), self.paths(transport))
+
+    async def test_CP_19_the_audit_line(self) -> None:
+        secret_tag = "태그-이름-5519"
+        routes = team_routes(team_parent_routes(), tags=[team_tag(REVIEW_TAG, secret_tag)])
+        transport, _ = await self.create(routes, parent="sample/271", tags=secret_tag)
+        line = self.tool_line()
+        self.assertEqual(line["tool"], "create_post")
+        self.assertEqual(line["mode"], "write")
+        self.assertTrue(line["ok"])
+        self.assertEqual(line["project_id"], TEAM_PID)
+        self.assertEqual(line["post_id"], NEW_POST_ID)
+        self.assertEqual(line["parent_id"], TEAM_PARENT)
+        self.assertEqual(line["calls"], len(transport.requests))
+        blob = self.audit_text()
+        for secret in (FAKE_TOKEN, SUBJECT, BODY, secret_tag, "업무 제목"):
+            with self.subTest(secret=secret):
+                self.assertNotIn(secret, blob)
+
+    async def test_CP_20_the_arguments(self) -> None:
+        names = list(inspect.signature(write_tools.create_post).parameters)
+        self.assertEqual(names, ["project", "subject", "body", "parent", "due", "tags"])
+        self.use_write_routes(team_routes())
+        found = {tool.name: tool for tool in await self.build(write=True).list_tools()}
+        schema = found["create_post"].input_schema
+        self.assertEqual(set(schema["properties"]), set(names))
+        self.assertEqual(sorted(schema["required"]), ["body", "project", "subject"])
+        for forbidden in ("users", "to", "cc", "milestone", "priority", "mime_type"):
+            with self.subTest(argument=forbidden):
+                self.assertNotIn(forbidden, schema["properties"])
+
+    def test_CP_21_the_description(self) -> None:
+        text = write_tools.CREATE_POST_DESCRIPTION
+        for phrase in (
+            "project는 사용자가 말한 프로젝트만",
+            "내가 멤버인 프로젝트에만",
+            "그 프로젝트의 사람들이 보게 된다",
+            "한 번에 하나다",
+            "다섯 번의 승인",
+            "create_my_post를 쓴다",
+            "필수 태그 그룹",
+            "누구에게 알리는지는 확인하지 못했다",
+            "sample/5",
+            "2026-09-30T18:00:00+09:00",
+            "쉼표",
+            "이럴 때는 쓰지 않는다",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        self.assertLessEqual(len(text), 1900)
+
+    async def test_CP_22_the_writer_is_closed_after_success_or_failure(self) -> None:
+        for status in (200, 400, 403, 500):
+            with self.subTest(status=status):
+                self.writers.clear()
+                answer = load_fixture("post_created") if status == 200 else {"header": {}}
+                routes = team_routes({("POST", TEAM_CREATE): (status, answer, None)})
+                arguments = {"project": "sample", "subject": SUBJECT, "body": BODY}
+                if status in (200, 400):
+                    await self.run_tool("create_post", arguments, routes)
+                else:
+                    _, message = await self.refused("create_post", arguments, routes)
+                    self.assertIn(f"상태 {status}" if status == 500 else "권한이 없습니다", message)
+                self.assertEqual(len(self.writers), 1)
+                self.assertTrue(self.writers[0].close.called)
+
+    async def test_CP_23_my_personal_project_named_with_the_at_sign(self) -> None:
+        routes = team_routes(
+            {
+                ("GET", TAGS): (200, reply([], total=0), None),
+                ("POST", CREATE): (200, load_fixture("post_created"), None),
+                ("GET", NEW_DETAIL): (
+                    200,
+                    reply(post_json(111, post_id=NEW_POST_ID, project_id=MINE, code="@personal")),
+                    None,
+                ),
+            },
+            private=[personal_row(MINE, "@personal")],
+        )
+        transport, text = await self.create(routes, project="@personal")
+        self.assertEqual(self.writes(transport)[0].url.path, CREATE)
+        self.assertIn("- 프로젝트: @personal", text.splitlines())
+
+    def test_CP_24_the_tool_is_synchronous(self) -> None:
+        self.assertFalse(inspect.iscoroutinefunction(write_tools.create_post))
 
 
 if __name__ == "__main__":

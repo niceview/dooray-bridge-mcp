@@ -453,6 +453,26 @@ class GuideTextTest(unittest.TestCase):
         self.assertIn("[@hong.gd/12]", new_post)
         self.assertNotIn("상위 업무: [hong.gd/12]", new_post)
 
+    def test_NP_1_new_post_names_both_tools_and_how_to_choose(self) -> None:
+        # 020 spec §5-3 — 만들 곳을 고르는 규칙, 같은 프로젝트의 상위, 필수 태그, 알림 줄.
+        new_post = self.topic("new-post")
+        for phrase in (
+            "create_post",
+            "create_my_post",
+            "짐작해 고르지 않는다",
+            "같은 프로젝트의 업무만",
+            "필수 태그 그룹",
+            "그 프로젝트의 사람들이 봅니다",
+            "프로젝트 구성원",
+            "상위 업무만 말했으면",
+            "그 업무의 프로젝트가 만들 곳이다",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, new_post)
+        for gone in ("프로젝트는 고를 수 없다", "팀 프로젝트에는 만들 수 없다"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, new_post)
+
 
 class McpServerTest(unittest.TestCase):
     """002 spec §7-4의 P11~P17. 묶음 2가 켰다 (002 plan 단계 9)."""
@@ -725,7 +745,7 @@ class McpServerTest(unittest.TestCase):
             )
 
         written = add_tool_calls("write_tools.py")
-        self.assertEqual(len(written), 8)  # 만들기 셋 + 고치기 다섯 (012 spec §10-2 #12)
+        self.assertEqual(len(written), 9)  # 만들기 넷 + 고치기 다섯 (012 spec §10-2 #12, 020)
         for call in written:
             with self.subTest(line=call.lineno):
                 self.assertTrue(is_the_mark(keyword(call, "meta")))
@@ -768,11 +788,12 @@ class McpServerTest(unittest.TestCase):
             ),
         )
 
-    def test_P33_the_feed_tenant_is_called_only_by_thread_people_and_create_my_post(self) -> None:
-        # 017(ADR 016) — 새 업무에는 그 업무의 글이 없어 `create_my_post`가 코어의 `feed_tenant`를 직접 부른다.
+    def test_P33_the_feed_tenant_is_called_only_by_thread_people_and_the_create_helper(self) -> None:
+        # 017(ADR 016) — 새 업무에는 그 업무의 글이 없어 업무 만들기가 코어의 `feed_tenant`를 직접 부른다.
+        # 020 — 업무 만들기 둘이 `_create_in`을 같이 쓴다.
         self.assertEqual(
             call_sites(SRC, "feed_tenant"),
-            sorted(["dooray_core/collect.py:thread_people", f"{WRITE_TOOLS_FILE}:create_my_post"]),
+            sorted(["dooray_core/collect.py:thread_people", f"{WRITE_TOOLS_FILE}:_create_in"]),
         )
 
     def test_P33_the_write_tools_do_not_touch_the_feed(self) -> None:
@@ -819,17 +840,17 @@ class McpServerTest(unittest.TestCase):
         ]
         self.assertEqual(texts, [])
 
-    def test_TR_25_the_task_link_helpers_are_shared_by_three_tools(self) -> None:
+    def test_TR_25_the_task_link_helpers_are_shared_by_the_write_paths(self) -> None:
         # 017 spec §2-1 — 업무 웹 주소 변환은 한 도우미에서. 요청 전 검사는 새로 쓰는 두 도구에서.
         self.assertEqual(
             call_sites(SRC, "_linked_tasks"),
             sorted(
-                f"{WRITE_TOOLS_FILE}:{name}" for name in ("_linked_new", "create_my_post", "post_comment")
+                f"{WRITE_TOOLS_FILE}:{name}" for name in ("_linked_new", "_create_in", "post_comment")
             ),
         )
         self.assertEqual(
             call_sites(SRC, "_task_links"),
-            sorted(f"{WRITE_TOOLS_FILE}:{name}" for name in ("create_my_post", "post_comment")),
+            sorted(f"{WRITE_TOOLS_FILE}:{name}" for name in ("create_my_post", "create_post", "post_comment")),
         )
 
     def test_P33_the_core_never_asks_who_i_am(self) -> None:
@@ -837,7 +858,7 @@ class McpServerTest(unittest.TestCase):
         self.assertEqual(call_sites(CORE, "me"), [])
 
     def test_P29_the_five_edit_tools_carry_the_destructive_annotation(self) -> None:
-        # 012 spec §2-2의 6 — 있던 것을 덮어쓰는 다섯만 `EDIT`(destructive)다. 만들기 셋은 `WRITE` 그대로다.
+        # 012 spec §2-2의 6 — 있던 것을 덮어쓰는 다섯만 `EDIT`(destructive)다. 만들기 넷은 `WRITE` 그대로다.
         tree = ast.parse((SERVER / "write_tools.py").read_text(encoding="utf-8"))
         calls = [
             node
@@ -846,7 +867,7 @@ class McpServerTest(unittest.TestCase):
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "add_tool"
         ]
-        self.assertEqual(len(calls), 8)
+        self.assertEqual(len(calls), 9)
 
         def keyword(call: ast.Call, name: str) -> ast.expr | None:
             found = [item.value for item in call.keywords if item.arg == name]
@@ -865,7 +886,7 @@ class McpServerTest(unittest.TestCase):
         )
         self.assertEqual(
             {name for name, value in marked.items() if value != "EDIT"},
-            {"post_comment", "create_my_post", "set_parent_post"},
+            {"post_comment", "create_my_post", "create_post", "set_parent_post"},
         )
 
     def test_P31_no_except_body_in_the_write_tools_raises_or_returns(self) -> None:

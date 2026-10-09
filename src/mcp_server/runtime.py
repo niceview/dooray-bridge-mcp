@@ -72,7 +72,7 @@ WRITE_TOOLS_REGISTERED = False
 
 # 부를 때마다 사람이 허락해야 실행된다 — 클라이언트의 모드·허용 규칙과 무관하게 (ADR 009).
 # 값은 JSON 불리언 true여야 한다. 다른 값은 클라이언트가 무시한다.
-# 두레이 쓰기 도구 여덟과 `set_reply_style`의 등록에 건다. 끄는 스위치를 두지 않는다 (005 spec §3-4).
+# 두레이 쓰기 도구 아홉과 `set_reply_style`의 등록에 건다. 끄는 스위치를 두지 않는다 (005 spec §3-4).
 ASK_EVERY_CALL = {"anthropic/requiresUserInteraction": True}
 
 

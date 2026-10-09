@@ -3967,5 +3967,154 @@ class PersonalCodeFallbackTest(ServerCase):
         self.assertTrue(self.tool_line()["ok"])
 
 
+
+# --- 020: search_posts의 parent (spec §2-6, §7-1의 SP-1~SP-7) ----------------------------
+
+SP_PID = "1000000000000000150"  # code `sample`
+SP_OTHER_PID = "1000000000000000151"  # code `other`
+SP_PARENT = "1000000000000000152"  # sample/5
+SP_OTHER_POST = "1000000000000000153"  # other/5
+SP_PARENT_DETAIL = f"{PROJECTS}/{SP_PID}/posts/{SP_PARENT}"
+
+
+class SearchParentTest(ServerCase):
+    """목록 요청은 쿼리로 가른다 — 번호 조회(`postNumber`)와 하위 목록(`parentPostId`)이 같은 경로다."""
+
+    def sp_routes(self, extra: dict | None = None) -> dict:
+        routes = personal_routes(
+            members=[project_json(SP_PID, "sample"), project_json(SP_OTHER_PID, "other")]
+        )
+        routes.update(extra or {})
+        return routes
+
+    def listed(self, transport, path: str = posts_path(SP_PID)) -> list:
+        return [row for row in transport.requests if row.url.path == path]
+
+    def with_param(self, transport, name: str) -> list:
+        return [row for row in transport.requests if name in row.url.params]
+
+    async def test_SP_1_the_children_of_a_numbered_parent(self) -> None:
+        parent = reply(post_json(5, post_id=SP_PARENT, project_id=SP_PID))
+        children = [
+            post_json(6, project_id=SP_PID, subject="하위 하나"),
+            post_json(7, project_id=SP_PID, subject="하위 둘"),
+        ]
+        transport = self.use_routes(
+            self.sp_routes(
+                {
+                    ("GET", posts_path(SP_PID)): [
+                        (200, reply([post_json(5, post_id=SP_PARENT, project_id=SP_PID)], total=1), None),
+                        (200, reply(children, total=2), None),
+                    ],
+                    ("GET", SP_PARENT_DETAIL): (200, parent, None),
+                }
+            )
+        )
+        text = await self.text_of(
+            self.build(), "search_posts", {"project": "sample", "parent": "sample/5"}
+        )
+        rows = self.listed(transport)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].url.params["postNumber"], "5")
+        self.assertNotIn("parentPostId", rows[0].url.params)
+        self.assertEqual(rows[1].url.params["parentPostId"], SP_PARENT)
+        self.assertNotIn("postNumber", rows[1].url.params)
+        self.assertLess(
+            transport.requests.index(rows[0]), transport.requests.index(rows[1])
+        )
+        self.assertIn("상위 [sample/5]", text.splitlines()[0])
+        self.assertIn("하위 하나", text)
+        self.assertIn("하위 둘", text)
+
+    async def test_SP_2_a_parent_without_a_project_sends_nothing(self) -> None:
+        transport = self.use_routes(self.sp_routes())
+        mcp = self.build()
+        with self.assertRaises(ToolError) as caught:
+            self.record(await mcp.call_tool("search_posts", {"parent": "sample/5"}))
+        self.assertTrue(
+            self.record(str(caught.exception)).endswith(tools.PARENT_NEEDS_PROJECT),
+            caught.exception,
+        )
+        self.assertEqual(transport.requests, [])
+
+    async def test_SP_3_a_parent_in_another_project_lists_nothing(self) -> None:
+        other = reply(post_json(5, post_id=SP_OTHER_POST, project_id=SP_OTHER_PID, code="other"))
+        for parent in ("other/5", SP_OTHER_POST):  # 리뷰 L5 — postId로 줘도 같다
+            with self.subTest(parent=parent):
+                transport = self.use_routes(
+                    self.sp_routes(
+                        {
+                            ("GET", posts_path(SP_OTHER_PID)): (
+                                200,
+                                reply([post_json(5, post_id=SP_OTHER_POST, project_id=SP_OTHER_PID)], total=1),
+                                None,
+                            ),
+                            ("GET", f"{PROJECTS}/{SP_OTHER_PID}/posts/{SP_OTHER_POST}"): (200, other, None),
+                            ("GET", f"/project/v1/posts/{SP_OTHER_POST}"): (200, other, None),
+                        }
+                    )
+                )
+                text = await self.text_of(
+                    self.build(), "search_posts", {"project": "sample", "parent": parent}
+                )
+                self.assertEqual(text, tools.PARENT_NOT_IN_PROJECT.format(label="other/5"))
+                self.assertEqual(self.with_param(transport, "parentPostId"), [])
+                self.assertEqual(
+                    [row for row in self.listed(transport) if "postNumber" not in row.url.params], []
+                )
+
+    async def test_SP_4_an_unknown_number_lists_nothing(self) -> None:
+        transport = self.use_routes(
+            self.sp_routes({("GET", posts_path(SP_PID)): [(200, reply([], total=0), None)]})
+        )
+        text = await self.text_of(
+            self.build(), "search_posts", {"project": "sample", "parent": "sample/5"}
+        )
+        self.assertEqual(text, tools.POST_NUMBER_NOT_FOUND.format(code="sample", number=5))
+        self.assertEqual(len(self.with_param(transport, "postNumber")), 1)
+        self.assertEqual(self.with_param(transport, "parentPostId"), [])
+        self.assertEqual(
+            [row for row in self.listed(transport) if "postNumber" not in row.url.params], []
+        )
+
+    async def test_SP_5_a_parent_given_as_a_post_id(self) -> None:
+        parent = reply(post_json(5, post_id=SP_PARENT, project_id=SP_PID))
+        transport = self.use_routes(
+            self.sp_routes(
+                {
+                    ("GET", f"/project/v1/posts/{SP_PARENT}"): (200, parent, None),
+                    ("GET", posts_path(SP_PID)): (200, reply([post_json(6, project_id=SP_PID)], total=1), None),
+                }
+            )
+        )
+        text = await self.text_of(
+            self.build(), "search_posts", {"project": "sample", "parent": SP_PARENT}
+        )
+        rows = self.listed(transport)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].url.params["parentPostId"], SP_PARENT)
+        self.assertEqual(self.with_param(transport, "postNumber"), [])
+        # 리뷰 L5 — 상위를 단건으로 읽은 뒤에 목록을 부른다.
+        bare = [row for row in transport.requests if row.url.path == f"/project/v1/posts/{SP_PARENT}"]
+        self.assertEqual(len(bare), 1)
+        self.assertLess(transport.requests.index(bare[0]), transport.requests.index(rows[0]))
+        self.assertIn("상위 [sample/5]", text)
+
+    async def test_SP_6_without_a_parent_nothing_changes(self) -> None:
+        transport = self.use_routes(
+            self.sp_routes({("GET", posts_path(SP_PID)): (200, reply([post_json(6, project_id=SP_PID)], total=1), None)})
+        )
+        text = await self.text_of(self.build(), "search_posts", {"project": "sample"})
+        self.assertEqual(self.with_param(transport, "parentPostId"), [])
+        self.assertEqual(len(self.listed(transport)), 1)
+        self.assertNotIn("상위 [", text)
+
+    def test_SP_7_the_description_says_how_to_give_a_parent(self) -> None:
+        text = tools.SEARCH_POSTS_DESCRIPTION
+        self.assertIn("project와 함께만", text)
+        self.assertIn('parent="sample/5"', text)
+        self.assertLessEqual(len(text), 1900)
+
+
 if __name__ == "__main__":
     unittest.main()
