@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from functools import partial
 
 from .client import PAGE_SIZE, DoorayReader, run_parallel
-from .models import FeedComment, Member, Post, Project
+from .models import FeedComment, Member, Post, Project, ProjectMember
 from .errors import (
     ApiError,
     AuthError,
@@ -564,6 +564,62 @@ def thread_people(
         people=tuple(people),
         tenant=tenant,
         feed_read=feed_read,
+        unnamed=unnamed,
+        comments_cut=cut,
+    )
+
+
+def project_people(
+    reader: DoorayReader,
+    members: Sequence[ProjectMember],
+    *,
+    tenant: str | None,
+    cut: bool,
+    max_lookups: int,
+) -> ThreadPeople:
+    """프로젝트 멤버 전원 — 설명의 멘션 범위 (023 spec §2-3). 이름은 이름표에 없으면 단건으로 채운다.
+
+    `feed_read`는 언제나 거짓이다 — 이 함수는 피드를 읽지 않고, `tenant`는 호출부가 `collect.feed_tenant`로
+    얻어 넘긴 값이다. 피드를 읽었는지로 문장을 고르는 `_mention_lines`(`NO_TENANT_FEED`)는 이 결과를 받지
+    않는다 — 설명의 문장은 `DESC_NO_TENANT` 하나다.
+    `comments_cut`은 '프로젝트 멤버 명단을 다 읽지 못했다'로 쓴다.
+    이름표에 없는 멤버가 `max_lookups`를 넘거나 명단이 잘렸으면 조회하지 않고 그 수를 `unnamed`에 센다 —
+    어차피 멘션하지 않는다(설계 리뷰 2 낮음 4).
+    호출: 이름 0~max_lookups. 피드·댓글을 읽지 않는다. `me`를 부르지 않는다.
+    """
+    wanted: list[str] = []  # 나온 순서, ID 중복 없음
+    unnamed = 0
+    for member in members:
+        if member.id in wanted:
+            continue
+        if _PERSON_ID.fullmatch(member.id) is None:
+            unnamed += 1  # 링크 주소 자리에 들어갈 값이다. 조용히 빼지 않고 센다
+            continue
+        wanted.append(member.id)
+
+    people: list[Person] = []
+    missing: list[str] = []
+    for member_id in wanted:
+        name = reader.names.get(member_id)
+        if name:
+            people.append(Person(id=member_id, name=name))
+        else:
+            missing.append(member_id)
+
+    if cut or len(missing) > max_lookups:
+        unnamed += len(missing)
+        missing = []
+    for member_id in missing:
+        name = _member_name(reader, member_id)
+        if not name:
+            unnamed += 1
+            continue
+        people.append(Person(id=member_id, name=name))
+
+    return ThreadPeople(
+        people=tuple(people),
+        tenant=tenant,
+        feed_read=False,
         unnamed=unnamed,
         comments_cut=cut,
     )

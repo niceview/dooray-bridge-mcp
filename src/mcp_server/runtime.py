@@ -54,6 +54,9 @@ STYLE_LIMIT = 500  # set_reply_style
 SUBJECT_LIMIT = 300  # create_my_post의 한 줄 제목. 두레이의 실제 상한은 미확인이다 (010 spec §2-5)
 MAX_TAGS = 10  # 사용자 텍스트에서 나온 값으로 루프를 돌 때는 개수 상한을 둔다 (001 리뷰 H1)
 MAX_PEOPLE = 10  # set_post_people의 사람 목록 인자 하나. 이름마다 조회가 하나 나간다 (012 spec §2-8)
+DESCRIPTION_SHOWN = 6000  # get_project_description이 보이는 정리한 설명의 글자 수. 실측 4,997자가 들어간다 (023 spec §2-6)
+MAX_MEMBER_PAGES = 3  # edit_project_description의 프로젝트 멤버 명단 300명 (023 spec §2-2)
+MAX_PROJECT_NAME_LOOKUPS = 20  # 설명의 @이름을 가리려고 채우는 멤버 이름 단건 조회 (023 spec §2-3)
 
 # 인자 문자열의 길이 상한 (§3-2의 표).
 PROJECT_ARG_LIMIT = 200
@@ -73,7 +76,7 @@ WRITE_TOOLS_REGISTERED = False
 
 # 부를 때마다 사람이 허락해야 실행된다 — 클라이언트의 모드·허용 규칙과 무관하게 (ADR 009).
 # 값은 JSON 불리언 true여야 한다. 다른 값은 클라이언트가 무시한다.
-# 두레이 쓰기 도구 열과 `set_reply_style`의 등록에 건다. 끄는 길은 config의 스위치 하나다 — 서버가 뜰 때 한 번, 개발용 등록의 환경변수로만 (021, ADR 019).
+# 두레이 쓰기 도구 열하나와 `set_reply_style`의 등록에 건다. 끄는 길은 config의 스위치 하나다 — 서버가 뜰 때 한 번, 개발용 등록의 환경변수로만 (021, ADR 019).
 ASK_EVERY_CALL = {"anthropic/requiresUserInteraction": True}
 
 # 두레이 쓰기 도구는 프로세스에 한 번에 하나다. 기다리지 않는다 (021, ADR 019).

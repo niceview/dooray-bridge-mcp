@@ -82,6 +82,14 @@ class Project:
 
 
 @dataclass(frozen=True)
+class ProjectMember:
+    """프로젝트 멤버 한 사람의 ID와 역할 (api-notes §2-3). 이름은 응답에 없다."""
+
+    id: str
+    role: str | None
+
+
+@dataclass(frozen=True)
 class Workflow:
     id: str
     name: str
@@ -239,6 +247,12 @@ def parse_project(data: object) -> Project:
         type=_text(raw.get("type")),
         scope=_text(raw.get("scope")),
     )
+
+
+def parse_project_member(data: object) -> ProjectMember:
+    """`GET …/projects/{id}/members`의 항목 하나 — `organizationMemberId`·`role` (api-notes §2-3·023 확인)."""
+    raw = _as_dict(data)
+    return ProjectMember(id=_id(raw.get("organizationMemberId")), role=_text(raw.get("role")))
 
 
 def parse_workflow(data: object) -> Workflow:

@@ -17,12 +17,13 @@ import json
 import os
 import threading
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import httpx2
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dooray_core import client, config, errors, mention, models, writer
+from dooray_core import client, config, errors, mention, models, render, writer
 from mcp_server import runtime, tools, view, write_tools
 
 from support import FAKE_TOKEN, load_fixture, mock_transport
@@ -1264,16 +1265,18 @@ class NewToolGateTest(ServerCase):
         self.assertNotIn("DOORAY_ENABLE_WRITE", os.environ)
         mcp = self.build(write=False)
         names = {tool.name for tool in await mcp.list_tools()}
-        self.assertEqual(len(names), 10)  # 007: list_my_comments, 013: guide
-        for missing in ("create_my_post", "create_post", "set_parent_post", "move_post"):
+        self.assertEqual(len(names), 11)  # 007: list_my_comments, 013: guide, 023: get_project_description
+        for missing in ("create_my_post", "create_post", "set_parent_post", "move_post", "edit_project_description"):
             with self.subTest(tool=missing):
                 self.assertNotIn(missing, names)
 
-    async def test_G_b_the_gate_on_registers_twenty(self) -> None:
+    async def test_G_b_the_gate_on_registers_twenty_two(self) -> None:
         with mock.patch.dict(os.environ, {"DOORAY_ENABLE_WRITE": "1"}):
             mcp = self.build(write=True)
             found = await mcp.list_tools()
-        self.assertEqual(len(found), 20)  # 007: list_my_comments, 012: 고치기 다섯, 013: guide, 020: create_post, 022: move_post
+        # 007: list_my_comments, 012: 고치기 다섯, 013: guide, 020: create_post, 022: move_post,
+        # 023: get_project_description·edit_project_description
+        self.assertEqual(len(found), 22)
         by_name = {tool.name: tool for tool in found}
         self.assertEqual(set(by_name) & WRITE_TOOLS, WRITE_TOOLS)
         for name in WRITE_TOOLS:
@@ -3385,6 +3388,12 @@ class EditCommonTest(EditCase):
             "set_post_fields": ("2026-09-30T18:00:00+09:00", '"none"', "highest"),
             "set_post_status": ("assignee", "me", "closed", "done"),
             "move_post": ("새 번호로", "subposts", "내가 멤버인 프로젝트로만"),  # 022
+            "edit_project_description": (  # 023
+                "정확히 한 번",
+                "어드민",
+                "‹",
+                "old·new로 링크의 주소(괄호 안 — 종류와 ID)를 고치지 않는다",
+            ),
         }
         for name in EDIT_TOOLS:
             for phrase in (*common, *own[name]):
@@ -3875,6 +3884,8 @@ class PersonalCodeFallbackWriteTest(WriteCase):
             # 022 MV-22 — 업무(@ 없음)에서 멈춘다. 둘째는 업무는 찾고 옮길 곳(@ 없음)에서 멈춘다.
             ("move_post", {"post": "hong.gd/12", "project": "sample", "subposts": 0}, False),
             ("move_post", {"post": f"{HONG_CODE}/12", "project": "hong.gd", "subposts": 0}, False),
+            # 023 — 프로젝트(@ 없음)에서 멈춘다.
+            ("edit_project_description", {"project": "hong.gd", "old": "", "new": "x"}, False),
         )
         for name, arguments, create in cases:
             with self.subTest(tool=name, arguments=arguments):
@@ -5672,6 +5683,968 @@ class MovePostTest(EditCase):
         self.assertEqual(len(self.writers), 0)
         line = self.tool_line()
         self.assertEqual((line["tool"], line["error"]), ("move_post", runtime.WRITE_BUSY_CODE))
+
+
+# --- 023 — 프로젝트 설명 (spec §7-1의 PD·PR) ------------------------------------
+
+D_MEMBER = "1000000000000000850"  # 바뀐 곳 옆의 멘션 링크(PD-17)
+
+
+def desc_bounds(stored: str, old: str) -> tuple[str, str]:
+    """spec §2-4의 셈. `old == ""`이면 `head = tail = ""` — `find("")`로 세지 않는다."""
+    if old == "":
+        return "", ""
+    at = stored.find(old)
+    assert at != -1 and stored.find(old, at + 1) == -1, (stored, old)
+    return stored[:at], stored[at + len(old) :]
+
+
+def desc_refusals(stored: str, old: str, new: str) -> tuple[bool, bool]:
+    """(`_splits_link`가 거절, `_links_stay_inside`가 거절) — 도구가 9단계 전에 보는 둘."""
+    head, tail = desc_bounds(stored, old)
+    split = bool(old) and write_tools._splits_link(stored, len(head), len(stored) - len(tail))
+    after = mention.strip_link_titles(new)
+    crossed = not write_tools._links_stay_inside(head, after, tail, head + after + tail)
+    return split, crossed
+
+
+# 경계에서 링크가 갈리거나 새로 서는 입력(spec §7-1 PD-4). (저장값, old, new)
+DESC_SPLIT_CASES = (
+    ("제목\n\n![a.png](/files/123)", "제목\n\n![a", "x"),  # 뒤 경계가 그림 안
+    ("제목\n\n![a.png](/files/123)", "png](/fi", "x"),  # 두 경계 모두 안
+    ('보기 [@홍길동](dooray://t/members/7 "member") 끝', "홍길동", "x"),  # 멘션 링크의 글자 칸만
+    ("앞 [" + "a" * 300 + "](dooray://t/members/1) 뒤", "a" * 10 + "](doo", "x"),  # 글자 300자 — 상한 너머
+    ('앞 [x](dooray://t/members/1 "x)y") 뒤', 'y") 뒤', "z"),  # title에 `)` — title 안에서 시작
+    ("보기 [x](dooray://t/members/7\n옛 글", "옛 글", '"member")'),  # 경계에서 링크가 새로 선다
+    ("보기 [x](dooray://t/members/7\n옛 글", "옛 글", '"' + "m" * 65 + '")'),  # 65자 title
+    ("보기 [x](dooray://t/members/7\n옛 글", "옛 글", "'member')"),  # 작은따옴표
+    ("보기 [x](dooray://t/members/7\n옛 글", "옛 글", ")"),  # `)` 하나
+    ("보기 [x](dooray://t/members/7\n옛 글", "옛 글", '"mem\nber")'),  # title 안 줄바꿈
+    ('[a](dooray://t/members/9\n"[x](dooray://t/members/2)옛 글', "옛 글", '")'),  # 머리 흡수
+    ('옛 글dooray://t/members/9 "[x](dooray://t/members/2)")', "옛 글", "[b]("),  # 꼬리 흡수
+    ('[x](dooray://t/members/7 "\n옛 글\n")', "옛 글", "새 글"),  # 여러 줄 title 안 (plan 검토 M-3)
+    ('[x](dooray://t/members/7 "a\n옛 글")', "옛 글", "새 글"),
+    ('![a](/files/1 "\n옛 글")', "옛 글", "새 글"),
+    # 코드 리뷰 1 M-1 — 문단의 평문 주소를 엔티티로 숨긴다. 마크다운은 링크 주소의 엔티티를 풀어 그린다.
+    ('보기 [@홍길동]옛 글&#100;ooray://t/members/7 "member") 끝', "옛 글", "("),
+    ('보기 [@홍길동]옛 글&#100;ooray://t/members/7 "member") 끝', "옛 글", "]"),
+    ('보기 [@홍길동]옛 글&#x64;ooray://t/members/7 "member") 끝', "옛 글", "("),
+    # 코드 리뷰 1 M13 — 문단 장치가 끝 경계에서만 잡는다(글자 300자 — 줄 장치·위치 대조가 못 잡는다).
+    ("[" + "a" * 300 + "옛\n\n글(dooray://t/members/7)", "옛\n\n글", "]"),
+)
+# 코드 리뷰 1 M-1·M13의 넷 — 이름 붙은 단위 단언이 따로 본다.
+DESC_ESCAPED_ADDRESS = DESC_SPLIT_CASES[15:18]
+DESC_END_PARAGRAPH = DESC_SPLIT_CASES[18]
+# 코드 리뷰 1 M4 — `new`의 `)` 한 글자가 빈 줄 너머의 링크를 닫는다. 위치 대조만 잡는다.
+DESC_CLOSED_BY_ONE = ('보기 [x](dooray://t/members/7\n\n"member"옛 글', "옛 글", ")")
+# 둘째 장치(문단)만 잡는 변형 — 줄에서 돌면 지나간다(변이 (머3)).
+DESC_PARAGRAPH_ONLY = DESC_SPLIT_CASES[7:10]
+# ②만 참 — `after`의 잡히지 않은 `](`(도구 안의 (ⅱ), 변이 (버3)). 두 함수는 모두 통과시킨다.
+DESC_AFTER_ONLY = ("옛 글https://example.com/a)", "옛 글", "[b](")
+# ③만 참 — `DOORAY_LINK`의 `\s+`가 빈 줄을 넘는다. 의도된 거절이다(변이 (러2)).
+DESC_STAY_ONLY = ("보기 [x](dooray://t/members/7\n\n옛 글", "옛 글", '"member")')
+# 지나가는 입력.
+DESC_NORMAL_CASES = (
+    ('앞 [x](dooray://t/tasks/7 "sample/1") 뒤', '앞 [x](dooray://t/tasks/7 "sample/1") 뒤', "새"),  # 링크 통째
+    ("앞[x](dooray://t/tasks/7) 뒤", "앞", "새"),  # 링크 바로 앞(p == s)
+    ("앞 [x](dooray://t/tasks/7)뒤", "뒤", "새"),  # 링크 바로 뒤(p == e)
+    ("제목\n![a.png](/files/1)", "제목", "새 제목"),  # 그림 앞 줄
+    ("제목 끝", "끝", '[@홍길동](dooray://t/members/7 "member")'),  # `after`에 서버가 만든 멘션 링크
+    ('[x](dooray://t/members/7 "member")\n\n옛 글', "옛 글", "새 글"),  # 다른 문단의 링크
+    ('보기 [x](dooray://t/members/7 "member") 옛 글', "옛 글", "새 글"),  # 같은 문단의 온전한 링크 옆 평문
+    ("제목\n\n![a.png](/files/123)", "제목\n\n![a.png](/files/123)", "새"),  # 그림 줄 전체를 품는다
+    ("제목 ![a.png](/files/123)", "제목 ", "새 "),  # 그림 바로 앞(p == s)에서 끝난다
+)
+
+
+class DescriptionPureTest(unittest.TestCase):
+    """023 spec §2-1·§2-4·§2-7의 순수 함수 넷 — PD-4·PD-13·PD-17의 단위 단언."""
+
+    def test_PD_4_unit_a_split_or_a_new_link_is_refused(self) -> None:
+        for stored, old, new in DESC_SPLIT_CASES:
+            with self.subTest(stored=stored[:40], old=old[:20], new=new[:20]):
+                self.assertTrue(any(desc_refusals(stored, old, new)))
+
+    def test_PD_4_unit_the_paragraph_device_catches_what_the_line_misses(self) -> None:
+        for stored, old, new in DESC_PARAGRAPH_ONLY:
+            with self.subTest(new=new):
+                head, tail = desc_bounds(stored, old)
+                self.assertTrue(write_tools._splits_link(stored, len(head), len(stored) - len(tail)))
+                after = mention.strip_link_titles(new)
+                self.assertTrue(write_tools._links_stay_inside(head, after, tail, head + after + tail))
+
+    def test_PD_4_unit_only_the_after_check_sees_the_bare_opener(self) -> None:
+        self.assertEqual(desc_refusals(*DESC_AFTER_ONLY), (False, False))
+
+    def test_PD_4_unit_only_the_position_check_sees_a_link_over_a_blank_line(self) -> None:
+        self.assertEqual(desc_refusals(*DESC_STAY_ONLY), (False, True))
+
+    def test_PD_4_unit_the_normal_cases_pass(self) -> None:
+        for stored, old, new in DESC_NORMAL_CASES:
+            with self.subTest(stored=stored[:40], old=old[:20]):
+                self.assertEqual(desc_refusals(stored, old, new), (False, False))
+
+    def test_PD_4_unit_an_escaped_address_in_the_paragraph_is_refused(self) -> None:
+        # 코드 리뷰 1 M-1 — 문단 장치는 평문 `dooray:`만이 아니라 엔티티로 숨긴 주소도 본다.
+        for stored, old, new in DESC_ESCAPED_ADDRESS:
+            with self.subTest(stored=stored, new=new):
+                head, tail = desc_bounds(stored, old)
+                self.assertTrue(write_tools._splits_link(stored, len(head), len(stored) - len(tail)))
+
+    def test_PD_4_unit_the_paragraph_device_runs_at_the_end_boundary_too(self) -> None:
+        # 코드 리뷰 1 M13 — 시작 경계의 문단은 깨끗하고 끝 경계의 문단에만 주소가 있다.
+        stored, old, new = DESC_END_PARAGRAPH
+        head, tail = desc_bounds(stored, old)
+        self.assertTrue(write_tools._splits_link(stored, len(head), len(stored) - len(tail)))
+        self.assertFalse(write_tools._splits_link(stored, len(head), len(head)))  # 시작 경계만으로는 지나간다
+        after = mention.strip_link_titles(new)
+        self.assertTrue(write_tools._links_stay_inside(head, after, tail, head + after + tail))
+
+    def test_PD_4_unit_a_link_closed_by_one_character_of_new_crosses(self) -> None:
+        # 코드 리뷰 1 M4 — 링크가 `after`의 첫 글자에서 끝나도 머리에서 시작했으면 가로지른다.
+        stored, old, new = DESC_CLOSED_BY_ONE
+        head, tail = desc_bounds(stored, old)
+        after = mention.strip_link_titles(new)
+        self.assertFalse(write_tools._links_stay_inside(head, after, tail, head + after + tail))
+        self.assertEqual(desc_refusals(stored, old, new), (False, True))
+        # 정확히 경계에서 끝나는 링크(머리가 `)`로 끝남)는 머리 안이다.
+        head = '보기 [x](dooray://t/members/7 "member")'
+        self.assertTrue(write_tools._links_stay_inside(head, "새", "", head + "새"))
+        self.assertTrue(write_tools._links_stay_inside("앞 ", "새", "[x](dooray://t/members/7)", "앞 새[x](dooray://t/members/7)"))
+
+    def test_PD_4_unit_an_empty_old_has_empty_bounds(self) -> None:
+        self.assertEqual(desc_bounds("   ", ""), ("", ""))
+        self.assertTrue(write_tools._links_stay_inside("", "새 글", "", "새 글"))
+
+    def test_PD_13_unit_link_addresses_keep_only_the_address(self) -> None:
+        cases = (
+            ('[sample/5 제목](dooray://t/tasks/9 "sample/5")', "dooray://t/tasks/9"),
+            ("[sample/5](dooray://t/tasks/9)", "dooray://t/tasks/9"),
+            ('[@이영희](dooray://t/members/7 "member")', "dooray://t/members/7"),
+            ("[@이영희](dooray://t/members/7)", "dooray://t/members/7"),
+            ('[a.pdf](dooray://t/files/3 "a.pdf")', "dooray://t/files/3"),  # spec §2-4 — 두레이 파일 링크
+            ('앞 ![a](dooray://t/files/3 "a") 뒤', "앞 !dooray://t/files/3 뒤"),  # 앞의 `!`는 그대로
+        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(write_tools._link_addresses(text), expected)
+        unchanged = (
+            "![a.png](/files/123)",
+            "[a.pdf](/files/123)",
+            '[@개발팀](dooray://t/member-groups/5 "memberGroup")',
+            "[웹](https://acme.dooray.com/project/tasks/9)",
+            "평문 dooray://t/tasks/9",
+            "[" + "a" * 257 + "](dooray://t/tasks/9)",  # 상한 너머는 펴지 않는다
+            '[x](dooray://t/tasks/9 "' + "t" * 65 + '")',
+        )
+        for text in unchanged:
+            with self.subTest(text=text[:40]):
+                self.assertEqual(write_tools._link_addresses(text), text)
+        # 다른 업무·다른 사람이면 다르게 판정된다.
+        self.assertNotEqual(
+            write_tools._link_addresses("[a](dooray://t/tasks/9)"),
+            write_tools._link_addresses("[a](dooray://t/tasks/8)"),
+        )
+
+    def snippet(self, text: str, changed: str) -> list[str]:
+        at = text.find(changed)
+        return write_tools._description_snippet(text, at, at + len(changed), web_base=WEB_BASE)
+
+    def test_PD_17_unit_only_the_changed_lines_are_shown(self) -> None:
+        text = "첫 줄 남의 글\n앞 바뀐 곳 뒤\n셋째 줄 남의 글"
+        found = self.snippet(text, "바뀐 곳")
+        self.assertEqual(len(found), 1)
+        self.assertIn("----- 두레이 콘텐츠 시작 (고친 뒤 설명의 바뀐 곳) -----", found[0])
+        self.assertIn("앞 바뀐 곳 뒤", found[0])
+        self.assertNotIn("남의 글", found[0])
+
+    def test_PD_17_unit_eleven_lines_show_ten_and_a_cut_line(self) -> None:
+        changed = "\n".join(f"줄{n:02d}" for n in range(11))
+        found = self.snippet(f"앞\n{changed}\n뒤", changed)
+        self.assertEqual(found[0], write_tools.DESC_CONTEXT_CUT.format(lines=10))
+        self.assertIn("줄09", found[1])
+        self.assertNotIn("줄10", found[1])
+        self.assertNotIn("뒤", found[1].split("-----")[2])
+
+    def test_PD_17_unit_a_long_cleaned_text_is_truncated(self) -> None:
+        changed = "가" * 1300
+        found = self.snippet(changed, changed)
+        self.assertIn("…(본문 100자 생략)", found[0])
+
+    def test_PD_17_unit_a_mention_link_beside_the_change_leaves_no_address(self) -> None:
+        link = f'[@x](dooray://{TENANT}/members/{D_MEMBER} "member")'
+        text = f"{'가' * 20}{link} 바뀐 곳 {link}{'나' * 20}"
+        found = "\n".join(self.snippet(text, "바뀐 곳"))
+        self.assertIn("@x 바뀐 곳 @x", found)
+        for leaked in ("dooray://", D_MEMBER, TENANT):
+            with self.subTest(leaked=leaked):
+                self.assertNotIn(leaked, found)
+
+    def test_PD_17_unit_an_unparsed_link_is_withheld(self) -> None:
+        cases = (
+            # title이 다음 줄인 링크 — 바뀐 곳은 주소가 있는 첫 줄
+            (f'앞 바뀐 곳 [@x](dooray://{TENANT}/members/{D_MEMBER}\n"member") 뒤', "바뀐 곳"),
+            # 글자 257자 링크 — 상한 너머
+            (f"앞 바뀐 곳 [{'a' * 257}](dooray://{TENANT}/members/{D_MEMBER}) 뒤", "바뀐 곳"),
+        )
+        for text, changed in cases:
+            with self.subTest(text=text[:40]):
+                found = self.snippet(text, changed)
+                self.assertEqual(found, [write_tools.DESC_SNIPPET_WITHHELD])
+                self.assertNotIn(D_MEMBER, "\n".join(found))
+
+
+
+class LinkMarksWithoutPostTest(unittest.TestCase):
+    """LM-1(plan이 붙인 번호 — spec §2-3의 6): 업무도 참여자도 없이 `@` 후보가 있으면 프로그래머 실수다."""
+
+    class Untouchable:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"reader를 건드렸습니다: {name}")
+
+    def test_LM_1_marks_without_a_post_or_people_raise_before_reading(self) -> None:
+        with self.assertRaises(ValueError):
+            write_tools._link_marks(self.Untouchable(), None, "확인 부탁드립니다 @홍길동 ")
+
+    def test_LM_1_no_marks_need_no_post(self) -> None:
+        self.assertEqual(write_tools._link_marks(self.Untouchable(), None, "확인했습니다."), ("확인했습니다.", None))
+
+
+# --- 023 — 설명 고치기 도구 (spec §7-1의 PD-1~PD-18) ----------------------------
+
+D_PID = "1000000000000000230"  # 팀 `sample`, 내 역할 admin
+D_OTHER_PID = "1000000000000000231"  # 팀 `other`, 내 역할 member
+D_TWIN_PID = "1000000000000000232"  # code `sample`, 비멤버
+D_SEEN_PID = "1000000000000000233"  # code `seen`, 비멤버
+D_LINKED = "1000000000000000234"  # new에 링크할 업무
+D_PATH = f"{PROJECTS}/{D_PID}"
+D_ME = "1000000000000000001"  # fixture members_me
+D_LINKED_BARE = f"/project/v1/posts/{D_LINKED}"
+D_LINKED_WEB = f"{EXAMPLE_WEB}/project/tasks/{D_LINKED}"
+D_LINKED_LINK = f"[sample/7](dooray://{TENANT}/tasks/{D_LINKED})"
+D_STORED = "제목\n\n![a.png](/files/1000000000000000236)\n1단계 기획"
+D_OLD = "1단계 기획"
+D_NEW = "1단계 기획 → 2단계 개발"
+
+
+def d_member(n: int) -> str:
+    return f"10000000000000008{n:02d}"
+
+
+def d_roster(*rows: tuple[str, str]) -> list[dict]:
+    return [{"organizationMemberId": member_id, "role": role} for member_id, role in rows]
+
+
+def d_swap(stored: str, old: str, new: str) -> str:
+    """도구가 보낼 글 — 찾아 바꾸기 한 곳. `old == ""`이면 `new`가 전부다."""
+    return new if old == "" else stored.replace(old, new, 1)
+
+
+def desc_routes_023(
+    stored: object = D_STORED,
+    after: object = None,
+    *,
+    pid: str = D_PID,
+    roster: list[dict] | None = None,
+    total: int | None = None,
+    members: list[dict] | None = None,
+    extra: dict | None = None,
+) -> dict:
+    """설명 고치기의 길: 프로젝트 목록(2) → me → members → 설명 → PUT → 다시 읽기.
+
+    설명 GET과 다시 읽기는 같은 경로라 list `[앞, 뒤]`다. `after`가 `None`이면 앞과 같은 값을 되풀이한다.
+    """
+    routes = personal_routes(
+        members=(
+            [project_json(D_PID, "sample"), project_json(D_OTHER_PID, "other")]
+            if members is None
+            else members
+        ),
+        private=[personal_row(MINE, "@personal")],
+    )
+    rows = d_roster((D_ME, "admin"), (d_member(2), "member")) if roster is None else roster
+    routes[("GET", f"{PROJECTS}/{pid}/members")] = (
+        200,
+        reply(rows, total=len(rows) if total is None else total),
+        None,
+    )
+
+    def described(value: object) -> tuple:
+        return (200, reply({"id": pid, "code": "sample", "description": value}), None)
+
+    routes[("GET", f"{PROJECTS}/{pid}")] = [described(stored), described(stored if after is None else after)]
+    routes[("PUT", f"{PROJECTS}/{pid}")] = (200, load_fixture("write_null"), None)
+    routes[("GET", D_LINKED_BARE)] = (200, detail_with(id=D_LINKED), None)
+    routes.update(extra or {})
+    return routes
+
+
+class EditProjectDescriptionTest(EditCase):
+    """023 spec §7-1의 PD-1~PD-18."""
+
+    def paths(self, transport) -> list[tuple[str, str]]:
+        return [(row.method, row.url.path) for row in transport.requests]
+
+    def forget_logs(self) -> None:
+        for path in (self.home / "logs").glob("*.jsonl"):
+            path.unlink()
+
+    async def edit(self, routes: dict, **arguments: object):
+        self.writers.clear()
+        self.forget_logs()
+        values = {"project": "sample", "old": D_OLD, "new": D_NEW, **arguments}
+        return await self.run_tool("edit_project_description", values, routes)
+
+    async def edit_refused(self, routes: dict, **arguments: object):
+        self.writers.clear()
+        self.forget_logs()
+        values = {"project": "sample", "old": D_OLD, "new": D_NEW, **arguments}
+        return await self.refused("edit_project_description", values, routes)
+
+    async def edit_swapped(self, stored: str, old: str, new: str, **more: object):
+        """저장값 `stored`에서 old → new. 다시 읽은 값은 보낸 글과 같다."""
+        return await self.edit(desc_routes_023(stored, d_swap(stored, old, new), **more), old=old, new=new)
+
+    def no_lookups(self, transport) -> None:
+        """피드·업무·이름 GET 0 — me 말고 `/common/v1/members/…`가 없다."""
+        for method, path in self.paths(transport):
+            with self.subTest(path=path):
+                self.assertNotEqual(path, STREAMS)
+                self.assertFalse(path.startswith("/project/v1/posts"), path)
+                self.assertFalse(path.startswith("/common/v1/members/") and path != ME, path)
+
+    def assertNotSent(self, transport) -> None:
+        self.assertNotIn("PUT", [row.method for row in transport.requests])
+        self.assertNothingWritten(transport)
+
+    def assertCallsCounted(self, transport) -> None:
+        self.assertEqual(self.tool_line()["calls"], len(transport.requests))
+
+    # --- PD-1 · PD-2 · PD-3 — 성공 ---
+
+    async def test_PD_1_one_find_and_replace(self) -> None:
+        expected = d_swap(D_STORED, D_OLD, D_NEW)
+        transport, text = await self.edit(desc_routes_023(D_STORED, expected))
+        self.assertEqual(
+            self.paths(transport),
+            [
+                ("GET", PROJECTS),
+                ("GET", PROJECTS),
+                ("GET", ME),
+                ("GET", f"{D_PATH}/members"),
+                ("GET", D_PATH),
+                ("PUT", D_PATH),
+                ("GET", D_PATH),
+            ],
+        )
+        self.assertEqual(self.sent(transport), {"description": expected})
+        lines = text.splitlines()
+        self.assertEqual(lines[0], write_tools.DESC_EDITED)
+        self.assertIn("- 프로젝트: sample", lines)
+        self.assertIn(write_tools.DESC_CHANGED.format(before=len(D_OLD), after=len(D_NEW)), lines)
+        self.assertIn(write_tools.DESC_UNDO, lines)
+        self.assertIn(write_tools.DESC_HISTORY, lines)
+        self.assertNotIn(write_tools.DESC_FRESH, lines)
+        self.assertIn(f"----- {render.UNTRUSTED_OPEN} ({write_tools.DESC_SNIPPET}) -----", lines)
+        self.assertIn(f"----- {render.UNTRUSTED_CLOSE} -----", lines)
+        self.assertIn(D_NEW, lines)
+        self.assertNotIn("제목", text.split(render.UNTRUSTED_OPEN, 1)[1])  # 다른 줄은 싣지 않는다
+        self.no_lookups(transport)
+        self.assertCallsCounted(transport)
+        line = self.tool_line()
+        self.assertTrue(line["ok"])
+        self.assertEqual(len(self.writers), 1)
+        self.assertTrue(self.writers[0].close.called)
+
+    async def test_PD_2_the_picture_line_goes_back_byte_for_byte(self) -> None:
+        stored = "제목\n\n![a.png](/files/123)"
+        transport, _ = await self.edit_swapped(stored, "제목", "새 제목")
+        self.assertEqual(self.sent(transport), {"description": "새 제목\n\n![a.png](/files/123)"})
+
+    async def test_PD_3_an_empty_description_takes_the_whole_new(self) -> None:
+        transport, text = await self.edit(desc_routes_023("", "첫 설명"), old="", new="첫 설명")
+        self.assertEqual(self.sent(transport), {"description": "첫 설명"})
+        lines = text.splitlines()
+        self.assertEqual(lines[0], write_tools.DESC_EDITED)
+        self.assertIn(write_tools.DESC_FRESH_CHANGED.format(after=4), lines)
+        self.assertIn(write_tools.DESC_FRESH, lines)
+        self.assertNotIn(write_tools.DESC_UNDO, lines)
+
+    async def test_PD_3_a_blank_description_is_counted_without_find(self) -> None:
+        # `head`·`tail`을 `find("")`로 세면 `tail`이 공백 전체가 되어 다시 읽은 값과 어긋난다(spec §2-4).
+        # 다시 읽은 값이 보낸 글과 달라야(두레이가 링크 글자를 고쳐 저장) 가운데 대조까지 간다(코드 리뷰 1 M12).
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            new = f"참고 [sample/7]({D_LINKED_WEB})"
+            rewritten = f'참고 [sample/7 다른 제목](dooray://{TENANT}/tasks/{D_LINKED} "sample/7")'
+            transport, text = await self.edit(self.mention_routes("  ", rewritten), old="", new=new)
+        self.assertEqual(self.sent(transport), {"description": f"참고 {D_LINKED_LINK}"})
+        lines = text.splitlines()
+        self.assertEqual(lines[0], write_tools.DESC_EDITED)
+        self.assertIn(write_tools.DESC_REWRITTEN, lines)
+        self.assertIn(write_tools.DESC_FRESH, lines)
+        self.assertTrue(self.tool_line()["ok"])
+
+    async def test_PD_3_a_filled_description_refuses_an_empty_old(self) -> None:
+        transport, text = await self.edit(desc_routes_023("내용"), old="", new="첫 설명")
+        self.assertEqual(text, write_tools.DESC_OLD_EMPTY)
+        self.assertNotSent(transport)
+
+    # --- PD-4 — 대조와 링크 경계 ---
+
+    async def test_PD_4_the_replace_reasons(self) -> None:
+        for stored, old, new, sentence in (
+            (D_STORED, "없는 글", "x", write_tools.DESC_NOT_FOUND),
+            ("aaa", "aa", "b", write_tools.EDIT_AMBIGUOUS),  # 겹치는 것까지 센다
+            (D_STORED, D_OLD, D_OLD, write_tools.EDIT_SAME),
+            ("  x  ", "x", " ", write_tools.DESC_EMPTY),
+        ):
+            with self.subTest(old=old, new=new):
+                transport, text = await self.edit(desc_routes_023(stored), old=old, new=new)
+                self.assertEqual(text, sentence)
+                self.assertNotSent(transport)
+                self.no_lookups(transport)
+
+    async def test_PD_4_a_split_or_a_new_link_is_refused_before_any_lookup(self) -> None:
+        for stored, old, new in DESC_SPLIT_CASES:
+            with self.subTest(stored=stored[:40], old=old[:20], new=new[:20]):
+                transport, text = await self.edit(desc_routes_023(stored), old=old, new=new)
+                self.assertEqual(text, write_tools.DESC_LINK_SPLIT)
+                self.assertNotSent(transport)
+                self.no_lookups(transport)
+
+    async def test_PD_4_a_bare_opener_in_new_is_refused(self) -> None:
+        # ②만 — `_splits_link`·`_links_stay_inside`는 지나간다. 도구의 (ⅱ)가 잡는다(변이 (버3)).
+        stored, old, new = DESC_AFTER_ONLY
+        transport, text = await self.edit(desc_routes_023(stored), old=old, new=new)
+        self.assertEqual(text, write_tools.DESC_LINK_SPLIT)
+        self.assertNotSent(transport)
+
+    async def test_PD_4_a_link_over_a_blank_line_is_refused_by_the_position_check(self) -> None:
+        # ③만 — 의도된 거절이다(변이 (러2)).
+        stored, old, new = DESC_STAY_ONLY
+        transport, text = await self.edit(desc_routes_023(stored), old=old, new=new)
+        self.assertEqual(text, write_tools.DESC_LINK_SPLIT)
+        self.assertNotSent(transport)
+
+    async def test_PD_4_a_link_closed_by_one_character_of_new_is_refused(self) -> None:
+        # 코드 리뷰 1 M4 — `_links_stay_inside`의 경계. 도구 길에서도 PUT 0.
+        stored, old, new = DESC_CLOSED_BY_ONE
+        transport, text = await self.edit(desc_routes_023(stored), old=old, new=new)
+        self.assertEqual(text, write_tools.DESC_LINK_SPLIT)
+        self.assertNotSent(transport)
+        self.no_lookups(transport)
+
+    async def test_PD_4_the_normal_cases_go_out(self) -> None:
+        for stored, old, new in DESC_NORMAL_CASES:
+            if "dooray://" in new:
+                continue  # 서버가 만든 멘션 링크는 모델이 쓸 수 없다 — PD-11이 도구 길로 본다
+            with self.subTest(stored=stored[:40], old=old[:20]):
+                transport, text = await self.edit_swapped(stored, old, new)
+                self.assertEqual(self.sent(transport), {"description": d_swap(stored, old, new)})
+                self.assertEqual(text.splitlines()[0], write_tools.DESC_EDITED)
+
+    # --- PD-5 — 인자 검사 ---
+
+    async def test_PD_5_the_arguments_are_checked_before_any_request(self) -> None:
+        for arguments in (
+            {"project": ""},
+            {"project": "x" * 201},
+            {"old": "   "},
+            {"old": "x" * 4001},
+            {"new": ""},
+            {"new": "x" * 4001},
+            {"new": None},
+        ):
+            with self.subTest(arguments=str(arguments)[:40]):
+                transport, _ = await self.edit_refused(desc_routes_023(), **arguments)
+                self.assertEqual(transport.requests, [])
+                self.assertEqual(len(self.writers), 0)
+
+    # --- PD-6 — 어드민 판정 ---
+
+    async def test_PD_6_only_an_admin_by_id_is_sent(self) -> None:
+        full = d_roster(*((d_member(n), "member") for n in range(2, 102)))
+        for roster, me, total, sentence, pages in (
+            (d_roster((D_ME, "member"), (d_member(2), "admin")), None, None, write_tools.DESC_NOT_ADMIN, 1),
+            (d_roster((d_member(2), "admin")), None, None, write_tools.DESC_ADMIN_UNKNOWN, 1),
+            (d_roster(("", "admin"), (D_ME, "admin")), "", None, write_tools.DESC_ADMIN_UNKNOWN, 1),
+            (full, None, 301, write_tools.DESC_ADMIN_UNKNOWN, 3),  # 3쪽이 차고 내가 없다
+        ):
+            with self.subTest(sentence=sentence[:30], pages=pages, me=me):
+                extra = {}
+                if me is not None:
+                    extra[("GET", ME)] = (200, reply({"organizationMemberId": me, "name": "멤버1"}), None)
+                routes = desc_routes_023(roster=roster, total=total, extra=extra)
+                transport, text = await self.edit(routes)
+                self.assertEqual(text, sentence.format(code="sample"))
+                self.assertEqual(self.paths(transport).count(("GET", f"{D_PATH}/members")), pages)
+                self.assertNotIn(("GET", D_PATH), self.paths(transport))  # 설명 GET 0
+                self.assertNotSent(transport)
+
+    async def test_PD_6_a_same_name_admin_with_another_id_does_not_count(self) -> None:
+        # 이름이 나와 같은 다른 ID가 admin이어도 내 ID의 역할로 판정한다.
+        extra = {("GET", f"/common/v1/members/{d_member(3)}"): (200, reply({"organizationMemberId": d_member(3), "name": "멤버1"}), None)}
+        routes = desc_routes_023(roster=d_roster((d_member(3), "admin"), (D_ME, "member")), extra=extra)
+        transport, text = await self.edit(routes)
+        self.assertEqual(text, write_tools.DESC_NOT_ADMIN.format(code="sample"))
+        self.assertNotSent(transport)
+
+    # --- PD-7 · PD-8 — 이름과 상태 ---
+
+    async def test_PD_7_a_project_seen_only_in_activity_is_refused(self) -> None:
+        client.save_known_projects(
+            [models.parse_project(project_json(D_PID, "sample")), models.parse_project(project_json(D_OTHER_PID, "other"))],
+            seen=[
+                models.parse_project({"id": D_TWIN_PID, "code": "sample"}),
+                models.parse_project({"id": D_SEEN_PID, "code": "seen"}),
+            ],
+        )
+        for project, code in (("seen", "seen"), (D_SEEN_PID, "seen"), (D_TWIN_PID, "sample")):
+            with self.subTest(project=project):
+                transport, text = await self.edit(desc_routes_023(), project=project)
+                self.assertEqual(text, write_tools.DESC_NOT_MEMBER.format(code=code))
+                self.assertNotIn(("GET", ME), self.paths(transport))
+                self.assertNotIn(("GET", f"{D_PATH}/members"), self.paths(transport))
+                self.assertNotSent(transport)
+        # 이름으로 주면 멤버 쪽 하나로 걸러져 그 ID로 보낸다 — 모호로 멈추지 않는다.
+        expected = d_swap(D_STORED, D_OLD, D_NEW)
+        transport, text = await self.edit(desc_routes_023(D_STORED, expected), project="sample")
+        self.assertEqual(self.writes(transport)[0].url.path, D_PATH)
+        self.assertEqual(text.splitlines()[0], write_tools.DESC_EDITED)
+
+    async def test_PD_7_an_unknown_or_unmarked_personal_name_is_not_guessed(self) -> None:
+        for project in ("없는프로젝트", "personal"):
+            with self.subTest(project=project):
+                transport, text = await self.edit(desc_routes_023(), project=project)
+                self.assertIn(tools.PROJECT_NOT_FOUND.format(name=project), text)
+                self.assertIn(tools.PERSONAL_CODE_HINT, text)
+                self.assertEqual(text.splitlines()[-1], write_tools.PROJECT_CONFIRM_FIRST)
+                self.assertEqual(self.paths(transport), [("GET", PROJECTS), ("GET", PROJECTS)])
+                self.assertNotSent(transport)
+
+    async def test_PD_7_two_member_projects_with_one_name_stop(self) -> None:
+        members = [project_json(D_PID, "sample"), project_json(D_OTHER_PID, "sample")]
+        transport, text = await self.edit(desc_routes_023(members=members))
+        self.assertTrue(text.startswith(write_tools.DESC_AMBIGUOUS.format(count=2)), text)
+        self.assertEqual(text.splitlines()[-1], write_tools.PROJECT_CONFIRM_FIRST)
+        self.assertNotSent(transport)
+
+    async def test_PD_8_a_project_not_active_is_refused(self) -> None:
+        for state in ("archived", None):
+            with self.subTest(state=state):
+                row = project_json(D_PID, "sample")
+                if state is None:
+                    del row["state"]
+                else:
+                    row["state"] = state
+                transport, text = await self.edit(desc_routes_023(members=[row]))
+                self.assertEqual(text, write_tools.DESC_NOT_ACTIVE.format(code="sample"))
+                self.assertNotIn(("GET", ME), self.paths(transport))
+                self.assertNotSent(transport)
+                self.assertEqual(self.tool_line()["project_id"], D_PID)  # 코드 리뷰 1 L3 — 상태 검사 앞에 둔다
+
+    # --- PD-9 · PD-10 — new의 꺾쇠와 주소 ---
+
+    async def test_PD_9_angles_in_new_go_out_as_safe_openers(self) -> None:
+        stored = "앞 a<b 뒤"
+        new = "<script>x</script> <b> <- & >"
+        sent = new.replace("<", render.TAG_OPENER_SAFE)
+        transport, text = await self.edit(desc_routes_023(stored, d_swap(stored, "a<b", sent)), old="a<b", new=new)
+        body = self.sent(transport)["description"]
+        self.assertEqual(body, f"앞 {sent} 뒤")
+        self.assertEqual(body.count("<"), 0)
+        self.assertEqual(body.count(render.TAG_OPENER_SAFE), 4)
+        self.assertIn("& >", body)
+        self.assertIn(write_tools.DESC_ANGLES.format(count=4), text.splitlines())
+        self.assertEqual(lines_in_src("ANGLE_SUBSTITUTE"), [])
+
+    async def test_PD_10_an_address_in_new_sends_nothing(self) -> None:
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            for new in (
+                *DISGUISES,
+                "%64ooray://t/members/1",
+                f"[@홍길동]({D_LINKED_WEB})",
+                f"[<b></b>@홍길동]({D_LINKED_WEB})",  # 검사가 꺾쇠 치환 전의 원문에 돈다(변이 (사))
+            ):
+                with self.subTest(new=new[:40]):
+                    transport, message = await self.edit_refused(desc_routes_023(), new=new)
+                    self.assertTrue(message.endswith(write_tools.DOORAY_ADDRESS_IN_EDIT), message)
+                    self.assertEqual(transport.requests, [])
+                    self.assertEqual(len(self.writers), 0)
+
+    async def test_PD_10_task_and_file_links_pass_with_a_note(self) -> None:
+        new = f'참고 [sample/7](dooray://{TENANT}/tasks/{D_LINKED} "sample/7") [a.pdf](dooray://{TENANT}/files/9)'
+        sent = f"참고 {D_LINKED_LINK} [a.pdf](dooray://{TENANT}/files/9)"  # title을 뗀다 — 두레이가 채운다
+        transport, text = await self.edit(desc_routes_023("", sent), old="", new=new)
+        self.assertEqual(self.sent(transport), {"description": sent})
+        self.assertIn(write_tools.DIRECT_LINKS.format(count=2), text.splitlines())
+        self.no_lookups(transport)
+
+    # --- PD-11 · PD-12 — 멘션과 업무 링크 ---
+
+    def mention_routes(
+        self, stored: str, after: str, *, roster: list[dict] | None = None, total: int | None = None,
+        feed: object = None, names: dict[str, str] | None = None,
+    ) -> dict:
+        extra = {("GET", STREAMS): (200, load_fixture("streams") if feed is None else feed, None)}
+        for member_id, name in (names or {d_member(2): "멤버2"}).items():
+            extra[("GET", f"/common/v1/members/{member_id}")] = (
+                200,
+                reply({"organizationMemberId": member_id, "name": name}),
+                None,
+            )
+        return desc_routes_023(stored, after, roster=roster, total=total, extra=extra)
+
+    def name_gets(self, transport) -> list[str]:
+        return [path for _, path in self.paths(transport) if path.startswith("/common/v1/members/") and path != ME]
+
+    async def test_PD_11_a_member_name_becomes_a_mention_link(self) -> None:
+        link = f'[@멤버2](dooray://{TENANT}/members/{d_member(2)} "member")'
+        transport, text = await self.edit(
+            self.mention_routes("", f"확인 {link} 부탁"), old="", new="확인 @멤버2 부탁"
+        )
+        self.assertEqual(self.sent(transport), {"description": f"확인 {link} 부탁"})
+        self.assertEqual(self.paths(transport).count(("GET", STREAMS)), 1)
+        self.assertEqual(self.name_gets(transport), [f"/common/v1/members/{d_member(2)}"])
+        self.assertIn(write_tools.DESC_MENTIONED.format(names="멤버2"), text.splitlines())
+        self.assertNotIn(d_member(2), text)
+        self.assertNotIn("dooray://", text)
+        self.assertNotIn(TENANT, text)
+
+    async def test_PD_11_a_name_outside_the_project_stays_text(self) -> None:
+        transport, text = await self.edit(
+            self.mention_routes("", "확인 @없는사람 부탁"), old="", new="확인 @없는사람 부탁"
+        )
+        self.assertEqual(self.sent(transport), {"description": "확인 @없는사람 부탁"})
+        self.assertIn(write_tools.DESC_OUTSIDE, text)
+        self.assertIn(write_tools.EDIT_MENTIONED_NONE, text.splitlines())
+
+    async def test_PD_11_too_many_unnamed_members_mention_nobody_and_ask_nothing(self) -> None:
+        many = d_roster((D_ME, "admin"), *((d_member(n), "member") for n in range(2, 23)))  # 이름표에 없는 21명
+        transport, text = await self.edit(
+            self.mention_routes("", "확인 @멤버2 부탁", roster=many), old="", new="확인 @멤버2 부탁"
+        )
+        self.assertEqual(self.sent(transport), {"description": "확인 @멤버2 부탁"})
+        self.assertEqual(self.name_gets(transport), [])
+        self.assertIn(write_tools.DESC_INCOMPLETE, text.splitlines())
+
+    async def test_PD_11_a_cut_roster_mentions_nobody_and_asks_nothing(self) -> None:
+        page = d_roster((D_ME, "admin"), (d_member(2), "member"))
+        transport, text = await self.edit(
+            self.mention_routes("", "확인 @멤버2 부탁", roster=page, total=301), old="", new="확인 @멤버2 부탁"
+        )
+        self.assertEqual(self.paths(transport).count(("GET", f"{D_PATH}/members")), 3)
+        self.assertEqual(self.sent(transport), {"description": "확인 @멤버2 부탁"})
+        self.assertEqual(self.name_gets(transport), [])
+        self.assertIn(write_tools.DESC_INCOMPLETE, text.splitlines())
+
+    async def test_PD_11_without_one_tenant_the_name_stays_text(self) -> None:
+        transport, text = await self.edit(
+            self.mention_routes("", "확인 @멤버2 부탁", feed=EMPTY_FEED), old="", new="확인 @멤버2 부탁"
+        )
+        self.assertEqual(self.sent(transport), {"description": "확인 @멤버2 부탁"})
+        self.assertIn(write_tools.DESC_NO_TENANT, text.splitlines())
+
+    async def test_PD_12_a_task_web_link_becomes_a_dooray_task_link(self) -> None:
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            sent = f"참고 {D_LINKED_LINK} 확인 @멤버2 부탁"
+            link = f'[@멤버2](dooray://{TENANT}/members/{d_member(2)} "member")'
+            routes = self.mention_routes("", sent.replace("@멤버2", link))
+            transport, text = await self.edit(routes, old="", new=f"참고 [sample/7]({D_LINKED_WEB}) 확인 @멤버2 부탁")
+        self.assertEqual(self.sent(transport), {"description": sent.replace("@멤버2", link)})
+        self.assertEqual(self.paths(transport).count(("GET", STREAMS)), 1)  # 링크와 멘션이 함께여도 한 번
+        self.assertEqual(self.paths(transport).count(("GET", D_LINKED_BARE)), 1)
+        self.assertIn(write_tools.TASK_LINKS_DONE.format(count=1), text.splitlines())
+        # 블록 안의 바뀐 곳은 웹 주소로 정리돼 보인다. 두레이 내부 주소·테넌트는 없다.
+        self.assertNotIn("dooray://", text)
+        self.assertNotIn(TENANT, text)
+
+    async def test_PD_12_an_unreadable_or_too_many_task_links_send_nothing(self) -> None:
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            routes = self.mention_routes("", "x")
+            routes[("GET", D_LINKED_BARE)] = (404, load_fixture("error_404"), None)
+            transport, text = await self.edit(routes, old="", new=f"참고 [sample/7]({D_LINKED_WEB})")
+            self.assertEqual(text, write_tools.TASK_LINK_UNREADABLE)
+            self.assertNotSent(transport)
+
+            six = " ".join(f"[sample/{n}]({EXAMPLE_WEB}/project/tasks/{post_id})" for n, post_id in enumerate(linked_ids(6)))
+            transport, message = await self.edit_refused(self.mention_routes("", "x"), old="", new=six)
+            self.assertTrue(message.endswith(write_tools.TASK_LINKS_TOO_MANY), message)
+            self.assertFalse([path for _, path in self.paths(transport) if path.startswith("/project/v1/posts")])
+            self.assertNotIn(("GET", STREAMS), self.paths(transport))
+            self.assertNotSent(transport)
+
+    # --- PD-13 — 다시 읽기 판정 ---
+
+    async def judged(self, stored: str, old: str, new: str, again: object):
+        return await self.edit(desc_routes_023(stored, again), old=old, new=new)
+
+    def assertMismatch(self, transport, text: str) -> None:
+        self.assertEqual(text.splitlines()[0], write_tools.DESC_MISMATCH)
+        self.assertNotIn(render.UNTRUSTED_OPEN, text)
+        line = self.tool_line()
+        self.assertFalse(line["ok"])
+        self.assertEqual(line["error"], write_tools.DESC_MISMATCH_ERROR)
+        self.assertEqual(len(self.writes(transport)), 1)
+
+    async def test_PD_13_the_same_text_is_a_success(self) -> None:
+        _, text = await self.judged(D_STORED, D_OLD, D_NEW, d_swap(D_STORED, D_OLD, D_NEW))
+        self.assertEqual(text.splitlines()[0], write_tools.DESC_EDITED)
+        self.assertNotIn(write_tools.DESC_REWRITTEN, text)
+        self.assertTrue(self.tool_line()["ok"])
+
+    async def test_PD_13_a_rewritten_link_label_is_a_success_with_a_note(self) -> None:
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            new = f"참고 [sample/7]({D_LINKED_WEB})"
+            rewritten = f'참고 [sample/7 다른 제목](dooray://{TENANT}/tasks/{D_LINKED} "sample/7")'
+            stored = "머리\n옛 글\n꼬리"
+            routes = self.mention_routes(stored, d_swap(stored, "옛 글", rewritten))
+            transport, text = await self.edit(routes, old="옛 글", new=new)
+        self.assertEqual(self.sent(transport)["description"], d_swap(stored, "옛 글", f"참고 {D_LINKED_LINK}"))
+        self.assertEqual(text.splitlines()[0], write_tools.DESC_EDITED)
+        self.assertIn(write_tools.DESC_REWRITTEN, text.splitlines())
+        self.assertIn(render.UNTRUSTED_OPEN, text)
+        # 블록은 다시 읽은 저장값에서 고른다 — 두레이가 고친 라벨이 보이고 보낸 라벨은 없다(코드 리뷰 1 M5).
+        block = text.split(render.UNTRUSTED_OPEN, 1)[1].split(render.UNTRUSTED_CLOSE, 1)[0]
+        self.assertIn("[sample/7 다른 제목](", block)
+        self.assertNotIn("[sample/7](", block)
+        self.assertTrue(self.tool_line()["ok"])
+
+    async def test_PD_13_a_different_link_address_is_a_mismatch(self) -> None:
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            new = f"참고 [sample/7]({D_LINKED_WEB})"
+            other = f'참고 [sample/7](dooray://{TENANT}/tasks/1000000000000000239 "sample/7")'
+            stored = "머리\n옛 글\n꼬리"
+            routes = self.mention_routes(stored, d_swap(stored, "옛 글", other))
+            transport, text = await self.edit(routes, old="옛 글", new=new)
+        self.assertMismatch(transport, text)
+
+    async def test_PD_13_a_changed_tail_is_a_mismatch(self) -> None:
+        # 그림 줄이 사라졌다 — 바꾼 곳 밖이 다르다.
+        stored = "옛 글\n\n![a.png](/files/123)"
+        transport, text = await self.judged(stored, "옛 글", "새 글", "새 글")
+        self.assertMismatch(transport, text)
+
+    async def test_PD_13_a_changed_tail_of_the_same_length_is_a_mismatch(self) -> None:
+        # 변이 (차-1) — 꼬리만 같은 길이로 바뀌면 가운데는 같아 보인다. 꼬리를 바이트로 견주어야 잡힌다.
+        stored = "머리\n옛 글\n꼬리A"
+        transport, text = await self.judged(stored, "옛 글", "새 글", "머리\n새 글\n꼬리B")
+        self.assertMismatch(transport, text)
+
+    async def test_PD_13_a_changed_head_of_the_same_length_is_a_mismatch(self) -> None:
+        # 코드 리뷰 1 M11 — 머리만 같은 길이로 바뀌면 가운데는 같아 보인다. 머리를 바이트로 견주어야 잡힌다.
+        stored = "머리A\n옛 글\n꼬리"
+        transport, text = await self.judged(stored, "옛 글", "새 글", "머리B\n새 글\n꼬리")
+        self.assertMismatch(transport, text)
+
+    async def test_PD_13_a_different_middle_without_links_is_a_mismatch(self) -> None:
+        transport, text = await self.judged(D_STORED, D_OLD, D_NEW, d_swap(D_STORED, D_OLD, "다른 글"))
+        self.assertMismatch(transport, text)
+
+    async def test_PD_13_an_unreadable_reread_is_unverified(self) -> None:
+        routes = desc_routes_023()
+        routes[("GET", D_PATH)] = [routes[("GET", D_PATH)][0], (404, load_fixture("error_404"), None)]
+        transport, text = await self.edit(routes)
+        self.assertEqual(text.splitlines()[0], write_tools.DESC_UNVERIFIED)
+        self.assertNotIn(render.UNTRUSTED_OPEN, text)
+        self.assertTrue(self.tool_line()["ok"])
+        self.assertEqual(len(self.writes(transport)), 1)
+
+    async def test_PD_13_an_empty_middle_or_any_text_in_empty_bounds_is_a_mismatch(self) -> None:
+        # 설계 리뷰 1 M1의 세 경우 — 가운데에 링크를 넣어 셋째 줄의 문턱까지 오게 한다(변이 (차-2)·(차-3)).
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            new = f"참고 [sample/7]({D_LINKED_WEB})"
+            for stored, old, again in (
+                ("", "", ""),  # ① 빈 설명에 넣었는데 다시 읽은 값이 빔
+                ("", "", "전혀 다른 글"),  # ① 전혀 다른 글
+                ("옛 글 전체", "옛 글 전체", "전혀 다른 글"),  # ② old가 설명 전체
+                ("머리 옛 글", "옛 글", "머리 "),  # ③ old가 끝이고 바뀐 곳이 지워짐
+            ):
+                with self.subTest(stored=stored, again=again):
+                    transport, text = await self.edit(self.mention_routes(stored, again), old=old, new=new)
+                    self.assertMismatch(transport, text)
+
+    async def test_PD_13_the_middle_is_compared_not_only_its_addresses(self) -> None:
+        # 변이 (차-2) — 머리·꼬리가 같고 `middle`에 두레이 주소가 있다는 것만으로 성공하지 않는다.
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": EXAMPLE_WEB}):
+            new = f"참고 [sample/7]({D_LINKED_WEB})"
+            stored = "머리\n옛 글\n꼬리"
+            routes = self.mention_routes(stored, d_swap(stored, "옛 글", "누가 바꾼 글"))
+            transport, text = await self.edit(routes, old="옛 글", new=new)
+        self.assertMismatch(transport, text)
+
+    # --- PD-14 — 실패 ---
+
+    async def test_PD_14_a_refusal_says_why_without_the_result_message(self) -> None:
+        for status in (400, 403, 404):
+            with self.subTest(status=status):
+                routes = desc_routes_023(extra={("PUT", D_PATH): (status, load_fixture("error_404"), None)})
+                transport, text = await self.edit(routes)
+                hint = write_tools.DESC_HINTS[status]
+                self.assertEqual(text.splitlines()[0], write_tools.DESC_REFUSED.format(status=status, hint=hint))
+                self.assertNotIn("Post not found", text)
+                self.assertEqual(text.splitlines()[-1], write_tools.DESC_CHECK.format(id=D_PID))
+                self.assertFalse(self.tool_line()["ok"])
+                self.assertEqual(self.paths(transport).count(("GET", D_PATH)), 1)  # 다시 읽기 0
+
+    async def test_PD_14_an_unknown_outcome_is_not_retried(self) -> None:
+        for failure in ("network", 503, 429):
+            with self.subTest(failure=failure):
+                self.writers.clear()
+                self.forget_logs()
+                routes = desc_routes_023()
+                if failure == "network":
+                    transport = self.cut_off(routes, ("PUT", D_PATH))
+                else:
+                    routes[("PUT", D_PATH)] = (failure, {"header": {}}, None)
+                    transport = self.use_write_routes(routes)
+                text = await self.text_of(
+                    self.build(write=True), "edit_project_description", {"project": "sample", "old": D_OLD, "new": D_NEW}
+                )
+                self.assertEqual(text.splitlines()[0], write_tools.WRITE_UNKNOWN)
+                self.assertEqual(text.splitlines()[-1], write_tools.DESC_CHECK.format(id=D_PID))
+                self.assertEqual(self.paths(transport).count(("PUT", D_PATH)), 1)
+                self.assertFalse(self.tool_line()["ok"])
+
+    async def test_PD_14_an_auth_failure_is_raised(self) -> None:
+        routes = desc_routes_023(extra={("PUT", D_PATH): (401, load_fixture("error_404"), None)})
+        transport, message = await self.edit_refused(routes)
+        self.assertNotIn("Post not found", message)
+        self.assertEqual(self.paths(transport).count(("PUT", D_PATH)), 1)
+
+    # --- PD-15 · PD-16 — 감사 로그와 시그니처 ---
+
+    async def test_PD_15_the_audit_log_has_no_text_code_or_name(self) -> None:
+        link = f'[@멤버2](dooray://{TENANT}/members/{d_member(2)} "member")'
+        new = "감사로그-새-글 @멤버2 확인"
+        sent = f"감사로그-새-글 {link} 확인"
+        stored = "감사로그-옛-글"
+        transport, _ = await self.edit(self.mention_routes(stored, sent), old=stored, new=new)
+        line = self.tool_line()
+        self.assertEqual(
+            (line["tool"], line["mode"], line["project_id"], line["post_id"], line["changed"]),
+            ("edit_project_description", "write", D_PID, None, None),
+        )
+        self.assertEqual(line["calls"], len(transport.requests))
+        puts = [row for row in self.audit_lines() if row["kind"] == "api" and row["method"] == "PUT"]
+        self.assertEqual([(row["path"], row["project_id"]) for row in puts], [(D_PATH, D_PID)])
+        written = self.audit_text()
+        for hidden in ("감사로그", "sample", "멤버2", TENANT):
+            with self.subTest(hidden=hidden):
+                self.assertNotIn(hidden, written)
+
+    def test_PD_16_the_signature_is_three_strings(self) -> None:
+        names = list(inspect.signature(write_tools.edit_project_description).parameters)
+        self.assertEqual(names, ["project", "old", "new"])
+
+    async def test_PD_16_the_schema_requires_all_three(self) -> None:
+        mcp = self.build(write=True)
+        found = {tool.name: tool for tool in await mcp.list_tools()}["edit_project_description"]
+        self.assertEqual(set(found.input_schema["required"]), {"project", "old", "new"})
+        self.assertEqual(set(found.input_schema["properties"]), {"project", "old", "new"})
+
+    # --- PD-17 — 바뀐 곳 블록 ---
+
+    async def test_PD_17_only_the_changed_lines_are_shown_cleaned(self) -> None:
+        stored = "첫 줄 남의 글\n앞 옛 글 ![b.png](/files/7) 뒤\n셋째 줄 남의 글"
+        _, text = await self.edit_swapped(stored, "옛 글", "새 글")
+        block = text.split(render.UNTRUSTED_OPEN, 1)[1]
+        self.assertIn("앞 새 글 [이미지:", block)
+        self.assertNotIn("남의 글", text)
+
+    async def test_PD_17_eleven_lines_show_ten_and_a_cut_line(self) -> None:
+        changed = "\n".join(f"줄{n:02d}" for n in range(11))
+        _, text = await self.edit_swapped("앞\n옛 글\n뒤", "옛 글", changed)
+        lines = text.splitlines()
+        self.assertIn(write_tools.DESC_CONTEXT_CUT.format(lines=10), lines)
+        self.assertIn("줄09", lines)
+        self.assertNotIn("줄10", lines)
+
+    async def test_PD_17_a_long_cleaned_line_is_truncated(self) -> None:
+        _, text = await self.edit_swapped("옛 글", "옛 글", "가" * 1300)
+        self.assertIn("…(본문 100자 생략)", text)
+
+    async def test_PD_17_a_mention_beside_the_change_leaves_no_address(self) -> None:
+        link = f'[@x](dooray://{TENANT}/members/{D_MEMBER} "member")'
+        stored = f"{'가' * 20}{link} 옛 글 {link}{'나' * 20}"
+        _, text = await self.edit_swapped(stored, "옛 글", "새 글")
+        self.assertIn("@x 새 글 @x", text)
+        for leaked in ("dooray://", D_MEMBER, TENANT):
+            with self.subTest(leaked=leaked):
+                self.assertNotIn(leaked, text)
+
+    async def test_PD_17_a_title_on_the_next_line_withholds_the_block(self) -> None:
+        # 바뀐 곳은 링크의 첫 줄(주소가 있는 줄)에 있다(plan 검토 M-2).
+        stored = f'앞 옛 글 [@x](dooray://{TENANT}/members/{D_MEMBER}\n"member") 뒤'
+        transport, text = await self.edit_swapped(stored, "옛 글", "새 글")
+        self.assertEqual(len(self.writes(transport)), 1)
+        self.assertIn(write_tools.DESC_SNIPPET_WITHHELD, text.splitlines())
+        self.assertNotIn(render.UNTRUSTED_OPEN, text)
+        self.assertNotIn("dooray://", text)
+        self.assertNotIn(D_MEMBER, text)
+
+    async def test_PD_17_a_long_label_link_is_refused_before_the_snippet(self) -> None:
+        # 글자 257자 링크는 도구 길에서 `_splits_link`의 둘째 장치가 먼저 거절한다(plan 검토 M-2).
+        stored = f"앞 옛 글 [{'a' * 257}](dooray://{TENANT}/members/{D_MEMBER}) 뒤"
+        transport, text = await self.edit(desc_routes_023(stored), old="옛 글", new="새 글")
+        self.assertEqual(text, write_tools.DESC_LINK_SPLIT)
+        self.assertNotSent(transport)
+
+    # --- PD-18 — 쓰기 잠금 ---
+
+    async def test_PD_18_the_edit_goes_through_the_write_lock(self) -> None:
+        source = inspect.getsource(write_tools.edit_project_description)
+        self.assertIn('runtime.tool_call("edit_project_description", mode="write")', source)
+        self.assertNotIn("WRITE_LOCK", inspect.getsource(write_tools))
+        self.forget_logs()
+        transport = self.use_write_routes(desc_routes_023())
+        mcp = self.build(write=True)
+        caught: list[BaseException] = []
+        answered: list[object] = []
+
+        def attempt() -> None:
+            try:
+                answered.append(
+                    asyncio.run(
+                        mcp.call_tool(
+                            "edit_project_description", {"project": "sample", "old": D_OLD, "new": D_NEW}
+                        )
+                    )
+                )
+            except BaseException as error:  # 받은 예외를 그대로 본다
+                caught.append(error)
+
+        self.assertTrue(runtime.WRITE_LOCK.acquire(blocking=False))
+        worker = threading.Thread(target=attempt)
+        try:
+            worker.start()
+            worker.join(5)
+            self.assertFalse(worker.is_alive(), "거절하지 않고 잠금을 기다립니다.")
+        finally:
+            if runtime.WRITE_LOCK.locked():
+                runtime.WRITE_LOCK.release()
+            worker.join(5)
+        self.assertFalse(worker.is_alive(), "잠금을 푼 뒤에도 끝나지 않습니다.")
+        self.assertEqual(answered, [])
+        self.assertEqual(len(caught), 1, caught)
+        self.assertIsInstance(caught[0], ToolError)
+        message = self.record(str(caught[0]))
+        self.assertTrue(message.endswith(runtime.WRITE_BUSY_MESSAGE), message)
+        self.assertEqual(transport.requests, [])
+        self.assertEqual(len(self.writers), 0)
+        line = self.tool_line()
+        self.assertEqual((line["tool"], line["error"]), ("edit_project_description", runtime.WRITE_BUSY_CODE))
+
+
+def lines_in_src(needle: str) -> list[str]:
+    """`src/`에서 `needle`이 든 줄 (PD-9 — 옛 상수 이름이 없다)."""
+    root = Path(write_tools.__file__).resolve().parents[1]
+    return [
+        f"{path.name}:{number}"
+        for path in sorted(root.rglob("*.py"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if needle in line
+    ]
 
 
 if __name__ == "__main__":

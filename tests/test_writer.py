@@ -373,6 +373,48 @@ class MovePostWriterTest(WriterCase):
         self.assertEqual([name for name in names if name.startswith("include")], [])
 
 
+class ProjectDescriptionWriterTest(WriterCase):
+    """023 spec §7-1의 WR-1 — 프로젝트 설명을 바꾸는 요청 하나."""
+
+    PATH = f"/project/v1/projects/{PID}"
+
+    def make(self):
+        return self.make_writer({("PUT", self.PATH): (200, {"result": None}, None)})
+
+    def test_WR_1_the_request_is_one_put_with_only_the_description(self) -> None:
+        made, http = self.make()
+        result = made.update_project_description(project_id=PID, description="제목\n\n![a.png](/files/1)")
+        self.assertIsNone(result)  # 응답을 읽지 않는다
+        self.assertEqual(len(http.requests), 1)
+        self.assertEqual(made.calls, 1)
+        self.assertEqual((http.requests[0].method, http.requests[0].url.path), ("PUT", self.PATH))
+        self.assertEqual(json.loads(http.requests[0].content), {"description": "제목\n\n![a.png](/files/1)"})
+
+    def test_WR_1_an_empty_description_sends_nothing(self) -> None:
+        made, http = self.make()
+        for empty in ("", "   ", "\n\t", None):
+            with self.subTest(empty=empty):
+                with self.assertRaises(ValueError):
+                    made.update_project_description(project_id=PID, description=empty)  # type: ignore[arg-type]
+        self.assertEqual(http.requests, [])
+        self.assertEqual(made.calls, 0)
+
+    def test_WR_1_a_bent_id_sends_nothing(self) -> None:
+        made, http = self.make()
+        for bent in ("30/../../x", "10/posts/20", "?", "", "1" * 65):
+            with self.subTest(bent=bent):
+                with self.assertRaises(InvalidIdError):
+                    made.update_project_description(project_id=bent, description="설명")
+        self.assertEqual(http.requests, [])
+        self.assertEqual(made.calls, 0)
+
+    def test_WR_1_the_signature_has_no_other_field(self) -> None:
+        import inspect
+
+        names = list(inspect.signature(writer.DoorayWriter.update_project_description).parameters)
+        self.assertEqual(names, ["self", "project_id", "description"])
+
+
 class WriteIdSafetyTest(WriterCase):
     """W5-b — 굽은 ID는 다른 쓰기가 되지 않는다. 요청이 한 번도 나가지 않는다."""
 
@@ -812,9 +854,10 @@ class WriterCallCountTest(WriterCase):
 
 
 class WriterShapeTest(WriterCase):
-    def test_criterion_26_only_the_nine_writes_and_close(self) -> None:
+    def test_criterion_26_only_the_ten_writes_and_close(self) -> None:
         # 002 C5가 읽기 전용 프로퍼티 `calls`를 더했다. 010이 쓰기 메서드를 둘 더해 셋,
-        # 012가 고치기 다섯을 더해 여덟이다 (012 spec §10-2 #27). 022가 옮기기를 더해 아홉이다.
+        # 012가 고치기 다섯을 더해 여덟이다 (012 spec §10-2 #27). 022가 옮기기를 더해 아홉,
+        # 023이 프로젝트 설명을 더해 열이다.
         made, _ = self.make_writer({("POST", LOGS): (200, posted(), None)})
         public = {name for name in dir(made) if not name.startswith("_")}
         writes = {
@@ -827,8 +870,9 @@ class WriterShapeTest(WriterCase):
             "set_assignee_workflow",
             "set_done",
             "move_post",
+            "update_project_description",
         }
-        self.assertEqual(len(writes), 9)
+        self.assertEqual(len(writes), 10)
         self.assertEqual(public, writes | {"close", "calls"})
         methods = {name for name in public if callable(getattr(made, name))}
         self.assertEqual(methods, writes | {"close"})

@@ -355,7 +355,7 @@ class GuideTextTest(unittest.TestCase):
 
         self.assertIsInstance(guides.TOPICS, tuple)
         self.assertEqual([name for name, _ in guides.TOPICS], ["reply", "new-post", "organize", "edit"])
-        self.assertIn("쓰기는 다섯 가지뿐이다", guides.INDEX)  # 022: 옮기기
+        self.assertIn("쓰기는 여섯 가지뿐이다", guides.INDEX)  # 022: 옮기기, 023: 프로젝트 설명
 
     def test_P19_2_the_texts_call_no_api(self) -> None:
         # ② 코드 블록만이 아니라 전문을 본다. 두레이로 나가는 요청은 전부 MCP 도구가 보낸다.
@@ -557,6 +557,28 @@ class GuideTextTest(unittest.TestCase):
             with self.subTest(index=phrase):
                 self.assertIn(phrase, guides.INDEX)
 
+    def test_GD_P_edit_says_how_to_change_a_project_description(self) -> None:
+        # 023 spec §7-1 GD-P — 설명 고치기의 모양·조건. 목록 글이 여섯 가지를 말한다.
+        from mcp_server import guides
+
+        edit = self.topic("edit")
+        for phrase in (
+            "edit_project_description",
+            "get_project_description",
+            "멤버 모두가 봅니다",
+            "어드민",
+            'old=""',
+            "‹",
+            "알림이 갈 수 있음",
+            "남는지 확인하지 못했다",
+            "[이미지:",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, edit)
+        for phrase in ("여섯 가지뿐이다", "프로젝트 설명 고치기"):
+            with self.subTest(index=phrase):
+                self.assertIn(phrase, guides.INDEX)
+
 
 class McpServerTest(unittest.TestCase):
     """002 spec §7-4의 P11~P17. 묶음 2가 켰다 (002 plan 단계 9)."""
@@ -712,13 +734,13 @@ class McpServerTest(unittest.TestCase):
         from dooray_core import client
 
         writer_source = (CORE / "writer.py").read_text(encoding="utf-8")
-        self.assertEqual(writer_source.count("self._t.request("), 9)  # 022: 옮기기
+        self.assertEqual(writer_source.count("self._t.request("), 10)  # 022: 옮기기, 023: 프로젝트 설명
         posts = lines_containing(SRC, '"POST"')
         puts = lines_containing(SRC, '"PUT"')
         self.assertEqual(len([hit for hit in posts if WRITER_FILE in hit]), 6, posts)
-        self.assertEqual(len([hit for hit in puts if WRITER_FILE in hit]), 3, puts)
+        self.assertEqual(len([hit for hit in puts if WRITER_FILE in hit]), 4, puts)
         verbs = Counter(row[0] for row in client._WRITE_PATHS)
-        self.assertEqual(verbs, Counter({"POST": 6, "PUT": 3}))
+        self.assertEqual(verbs, Counter({"POST": 6, "PUT": 4}))
         elsewhere = [
             hit
             for hit in posts + puts
@@ -726,12 +748,12 @@ class McpServerTest(unittest.TestCase):
         ]
         self.assertEqual(elsewhere, [], f"쓰기 동사가 다른 파일에 생겼습니다: {elsewhere}")
 
-    def test_P21_the_allowed_write_table_holds_nine_rows_and_one_reader(self) -> None:
+    def test_P21_the_allowed_write_table_holds_ten_rows_and_one_reader(self) -> None:
         # ADR 008 결정 6, 012 spec §10-2 #10 — "무엇이 바뀔 길이 있는가"의 답이 코드 검색 하나다.
-        # 022가 옮기기를 더해 아홉이다.
+        # 022가 옮기기를 더해 아홉, 023이 프로젝트 설명을 더해 열이다.
         from dooray_core import client
 
-        self.assertEqual(len(client._WRITE_PATHS), 9)
+        self.assertEqual(len(client._WRITE_PATHS), 10)
         for row in client._WRITE_PATHS:
             with self.subTest(row=repr(row)[:120]):
                 self.assertEqual(len(row), 3)
@@ -795,6 +817,28 @@ class McpServerTest(unittest.TestCase):
         writer_lines = (CORE / "writer.py").read_text(encoding="utf-8").splitlines()
         fixed = [line for line in writer_lines if '"includeSubPosts": True' in line]
         self.assertEqual(len(fixed), 1, fixed)
+
+    def test_RR_2_the_project_body_carries_only_the_description(self) -> None:
+        # 023 spec §7-1 RR-2 — 카테고리 키는 `src/` 어디에도 없다. Writer의 본문 사전은 키 하나다(`ast`).
+        self.assertEqual(lines_containing(SRC, "projectCategoryId"), [])
+        tree = ast.parse((CORE / "writer.py").read_text(encoding="utf-8"))
+        method = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "update_project_description"
+        )
+        requests = [
+            node
+            for node in ast.walk(method)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "request"
+        ]
+        self.assertEqual(len(requests), 1)
+        bodies = [item.value for item in requests[0].keywords if item.arg == "body"]
+        self.assertEqual(len(bodies), 1)
+        self.assertIsInstance(bodies[0], ast.Dict)
+        self.assertEqual([key.value for key in bodies[0].keys], ["description"])
 
     def test_P23_the_mention_link_is_built_in_one_place(self) -> None:
         # 007 spec §8-3 — `dooray://`와 f-string 여는 따옴표가 한 줄에 같이 있는 곳은 `mention.py` 하나다.
@@ -1074,12 +1118,18 @@ class McpServerTest(unittest.TestCase):
             ),
         )
 
-    def test_P33_the_feed_tenant_is_called_only_by_thread_people_and_the_create_helper(self) -> None:
+    def test_P33_the_feed_tenant_is_called_only_by_thread_people_and_the_write_helpers(self) -> None:
         # 017(ADR 016) — 새 업무에는 그 업무의 글이 없어 업무 만들기가 코어의 `feed_tenant`를 직접 부른다.
-        # 020 — 업무 만들기 둘이 `_create_in`을 같이 쓴다.
+        # 020 — 업무 만들기 둘이 `_create_in`을 같이 쓴다. 023 — 설명에도 업무가 없어 설명 고치기가 직접 부른다.
         self.assertEqual(
             call_sites(SRC, "feed_tenant"),
-            sorted(["dooray_core/collect.py:thread_people", f"{WRITE_TOOLS_FILE}:_create_in"]),
+            sorted(
+                [
+                    "dooray_core/collect.py:thread_people",
+                    f"{WRITE_TOOLS_FILE}:_create_in",
+                    f"{WRITE_TOOLS_FILE}:edit_project_description",
+                ]
+            ),
         )
 
     def test_P33_the_write_tools_do_not_touch_the_feed(self) -> None:
@@ -1091,7 +1141,7 @@ class McpServerTest(unittest.TestCase):
             for node in ast.walk(tree)
             if isinstance(node, ast.Call) and called_name(node) in ("feed_comments", "feed_tenant")
         ]
-        self.assertEqual(calls, ["feed_tenant"])
+        self.assertEqual(calls, ["feed_tenant", "feed_tenant"])  # 023: 설명 고치기
         names: list[str] = []
         imported: list[str] = []
         for node in ast.walk(tree):
@@ -1109,13 +1159,13 @@ class McpServerTest(unittest.TestCase):
                 self.assertNotIn(name, imported)
         self.assertNotIn("feed_comments", names)
         # 이름으로 닿는 자리는 그 호출 하나다 — `collect.feed_tenant` 속성 접근. 다른 이름에 담아 부르지 않는다.
-        self.assertEqual(names.count("feed_tenant"), 1)
+        self.assertEqual(names.count("feed_tenant"), 2)  # 023: 설명 고치기
         reached = [
             node
             for node in ast.walk(tree)
             if isinstance(node, ast.Attribute) and node.attr == "feed_tenant"
         ]
-        self.assertEqual(len(reached), 1)
+        self.assertEqual(len(reached), 2)  # 023: 설명 고치기
         self.assertIsInstance(reached[0].value, ast.Name)
         self.assertEqual(reached[0].value.id, "collect")
         # docstring도 `ast.Constant`다.
@@ -1131,7 +1181,8 @@ class McpServerTest(unittest.TestCase):
         self.assertEqual(
             call_sites(SRC, "_linked_tasks"),
             sorted(
-                f"{WRITE_TOOLS_FILE}:{name}" for name in ("_linked_new", "_create_in", "post_comment")
+                f"{WRITE_TOOLS_FILE}:{name}"
+                for name in ("_linked_new", "_create_in", "post_comment", "edit_project_description")
             ),
         )
         self.assertEqual(
@@ -1154,7 +1205,7 @@ class McpServerTest(unittest.TestCase):
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "add_tool"
         ]
-        self.assertEqual(len(calls), 10)
+        self.assertEqual(len(calls), 11)  # 023: edit_project_description
 
         def keyword(call: ast.Call, name: str) -> ast.expr | None:
             found = [item.value for item in call.keywords if item.arg == name]
@@ -1169,7 +1220,15 @@ class McpServerTest(unittest.TestCase):
             marked[tool_name.value] = annotation.id
         self.assertEqual(
             {name for name, value in marked.items() if value == "EDIT"},
-            {"edit_comment", "edit_post", "set_post_people", "set_post_fields", "set_post_status", "move_post"},
+            {
+                "edit_comment",
+                "edit_post",
+                "set_post_people",
+                "set_post_fields",
+                "set_post_status",
+                "move_post",
+                "edit_project_description",
+            },
         )
         self.assertEqual(
             {name for name, value in marked.items() if value != "EDIT"},

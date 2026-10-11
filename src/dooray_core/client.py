@@ -51,6 +51,7 @@ from .models import (
     Page,
     Post,
     Project,
+    ProjectMember,
     Tag,
     Workflow,
     parse_comment,
@@ -61,6 +62,7 @@ from .models import (
     parse_page,
     parse_post,
     parse_project,
+    parse_project_member,
     parse_tag,
     parse_workflow,
     _as_dict,
@@ -84,7 +86,7 @@ _ID = r"[0-9A-Za-z_-]+"
 # 무언가를 **만드는** 두 행의 경로. 감사 로그가 만든 항목의 ID를 적을 때도 이것으로 가린다 (012 spec §5-6).
 _COMMENT_CREATE = re.compile(rf"/project/v1/projects/{_ID}/posts/{_ID}/logs")
 _POST_CREATE = re.compile(rf"/project/v1/projects/{_ID}/posts")
-# 쓰기가 허용된 전송 계층이 보낼 수 있는 (동사, 경로, 본문 키) 아홉 행. 이 표가 전부다 (012 spec §5-1).
+# 쓰기가 허용된 전송 계층이 보낼 수 있는 (동사, 경로, 본문 키) 열 행. 이 표가 전부다 (012 spec §5-1).
 # 정규식은 전부 **완전 일치**다 — 접두 일치면 생성 경로에 한 칸을 더한 경로가 통과한다.
 # 동사도 행에 있다 — 같은 경로라도 다른 동사는 다른 요청이다(업무 생성과 업무 수정).
 _WRITE_PATHS: tuple[tuple[str, re.Pattern[str], frozenset[str]], ...] = (
@@ -129,6 +131,8 @@ _WRITE_PATHS: tuple[tuple[str, re.Pattern[str], frozenset[str]], ...] = (
         re.compile(rf"/project/v1/projects/{_ID}/posts/{_ID}/move"),
         frozenset({"targetProjectId", "includeSubPosts"}),
     ),
+    # 프로젝트 설명 (api-notes 023 확인). 이름(`code`)·카테고리는 열지 않는다 — 본문 키가 하나다
+    ("PUT", re.compile(rf"/project/v1/projects/{_ID}"), frozenset({"description"})),
 )
 
 
@@ -1188,6 +1192,28 @@ class DoorayReader:
             project_id=_id(project_id),
         )
         return parse_project(data.get("result"))
+
+    def project_description(self, project_id: str) -> str | None:
+        """프로젝트 설명 (api-notes 023 확인). `GET …/projects/{id}` 1회. 키가 없거나 문자열이 아니면 None — 모른다."""
+        data = self._t.request(
+            "GET",
+            f"/project/v1/projects/{path_id(project_id)}",
+            project_id=_id(project_id),
+        )
+        description = _as_dict(data.get("result")).get("description")
+        return description if isinstance(description, str) else None
+
+    def project_members(self, project_id: str, *, max_pages: int) -> tuple[list[ProjectMember], bool]:
+        """프로젝트 멤버의 ID와 역할 (api-notes §2-3). 이름은 없다. `_paged`(size 100). 둘째 값은 "더 있다"."""
+        items, info = self._paged(
+            f"/project/v1/projects/{path_id(project_id)}/members",
+            {},
+            max_pages=max_pages,
+            project_id=_id(project_id),
+        )
+        # `totalCount`가 없으면(셀 수 없으면) `_paged`는 첫 쪽에서 멈춘다. 그 쪽이 꽉 찼으면 더 있는지 모른다 — 모를 때 막는다.
+        more = info.has_more or (info.total_count < len(items) and len(items) >= PAGE_SIZE)
+        return [parse_project_member(item) for item in items], more
 
     def seed_seen(self, projects: Sequence[Project]) -> None:
         """활동이 보인 프로젝트를 미리 채운다 (003 spec §6-2). 코어는 파일을 모른다."""

@@ -488,7 +488,7 @@ class PathSafetyTest(TransportCase):
 
 
 class WritePathTest(TransportCase):
-    """010 spec §9-1의 W-a~W-f, 012 spec §10-1의 WP-a~WP-g — 쓰기가 허용된 전송 계층이 내보낼 수 있는 아홉 행.
+    """010 spec §9-1의 W-a~W-f, 012 spec §10-1의 WP-a~WP-g — 쓰기가 허용된 전송 계층이 내보낼 수 있는 열 행.
 
     거절은 **요청이 나가지 않았음**으로 증명한다(`http.requests`의 길이).
     예외 종류만 보면 "보내고 나서 거절"과 구분되지 않는다.
@@ -504,6 +504,7 @@ class WritePathTest(TransportCase):
     TO_MEMBER = "/project/v1/projects/10/posts/20/to/40"
     DONE = "/project/v1/projects/10/posts/20/set-done"
     MOVE = "/project/v1/projects/10/posts/20/move"  # 022 — 다른 프로젝트로 옮기기
+    PROJECT = "/project/v1/projects/10"  # 023 — 프로젝트 설명
 
     # 행마다 (동사, 경로, 통과하는 본문). 완료 처리는 본문이 없다.
     ALLOWED = (
@@ -517,6 +518,7 @@ class WritePathTest(TransportCase):
         ("PUT", TO_MEMBER, {"workflowId": "7"}),
         # 022: 완료 처리 앞에 둔다 — W_a가 마지막 요청(완료 처리)의 빈 본문을 본다.
         ("POST", MOVE, {"targetProjectId": "30", "includeSubPosts": True}),
+        ("PUT", PROJECT, {"description": "설명"}),  # 023
         ("POST", DONE, None),
     )
 
@@ -524,7 +526,7 @@ class WritePathTest(TransportCase):
         ok = (200, {"result": {"id": "9"}}, None)
         return {(verb, path): ok for verb, path, _ in self.ALLOWED}
 
-    def test_W_a_WP_a_the_nine_allowed_writes_go_out(self) -> None:
+    def test_W_a_WP_a_the_ten_allowed_writes_go_out(self) -> None:
         transport, http = self.make(self.allowed_routes(), allow_write=True)
         for verb, path, body in self.ALLOWED:
             transport.request(verb, path, body=body)
@@ -653,7 +655,7 @@ class WritePathTest(TransportCase):
                     transport.request(verb, path, body=body)  # type: ignore[arg-type]
         self.assertEqual(http.requests, [])
 
-    def test_W_e_WP_d_a_reading_transport_refuses_all_nine(self) -> None:
+    def test_W_e_WP_d_a_reading_transport_refuses_all_ten(self) -> None:
         transport, http = self.make(self.allowed_routes())
         for verb, path, body in self.ALLOWED:
             with self.subTest(verb=verb, path=path):
@@ -727,8 +729,8 @@ class WritePathTest(TransportCase):
         transport.request("GET", self.COMMENT)
         self.assertEqual([line["comment_id"] for line in self.audit_lines()], [None, None])
 
-    def test_W_the_table_holds_exactly_nine_rows(self) -> None:
-        self.assertEqual(len(client._WRITE_PATHS), 9)  # 022가 옮기기를 더해 아홉
+    def test_W_the_table_holds_exactly_ten_rows(self) -> None:
+        self.assertEqual(len(client._WRITE_PATHS), 10)  # 022가 옮기기를 더해 아홉, 023이 프로젝트 설명을 더해 열
 
     def test_TP_1_the_move_row_is_a_full_match_on_post_only(self) -> None:
         # 022 spec §7-1 TP-1 — 접두·동사 거절은 **통과하는 본문**으로 보낸다. 빈 본문이면 정규식을
@@ -742,6 +744,38 @@ class WritePathTest(TransportCase):
             ("POST", "/project/v1/projects/10/posts/20/move/x"),
             ("PUT", self.MOVE),
             ("DELETE", self.MOVE),
+        ):
+            with self.subTest(verb=verb, path=path):
+                with self.assertRaises(WriteNotAllowedError):
+                    transport.request(verb, path, body=passing)
+        self.assertEqual(len(http.requests), 1, "거절인데 요청이 나갔습니다.")
+
+    def test_TP_1_the_project_row_takes_only_the_description(self) -> None:
+        # 023 spec §7-1 TP-1 — 본문 키는 `description` 하나. 이름(`code`)·카테고리는 섞여도 나가지 않는다.
+        transport, http = self.make(self.allowed_routes(), allow_write=True)
+        for body in (
+            {"code": "x"},
+            {"description": "a", "code": "x"},
+            {"projectCategoryId": "1"},
+            {},
+            None,
+        ):
+            with self.subTest(body=body):
+                with self.assertRaises(WriteNotAllowedError):
+                    transport.request("PUT", self.PROJECT, body=body)  # type: ignore[arg-type]
+        self.assertEqual(http.requests, [])
+
+    def test_TP_1_the_project_row_is_a_full_match_on_put_only(self) -> None:
+        # 023 spec §7-1 TP-1 — 접두·동사 거절은 **통과하는 본문**으로 보낸다(022 TP-1과 같은 까닭).
+        passing = {"description": "설명"}
+        transport, http = self.make(self.allowed_routes(), allow_write=True)
+        transport.request("PUT", self.PROJECT, body=passing)
+        self.assertEqual([(row.method, row.url.path) for row in http.requests], [("PUT", self.PROJECT)])
+        for verb, path in (
+            ("POST", self.PROJECT),
+            ("DELETE", self.PROJECT),
+            ("PUT", "/project/v1/projects/10/x"),
+            ("PUT", "/project/v1/projects"),
         ):
             with self.subTest(verb=verb, path=path):
                 with self.assertRaises(WriteNotAllowedError):
@@ -2660,6 +2694,79 @@ class ReaderSeenProjectsTest(ReaderCase):
     def test_seen_is_empty_until_it_is_seeded(self) -> None:
         reader, _ = self.make_reader({})
         self.assertEqual(reader.seen_projects, ())
+
+
+class ReaderProjectDescriptionTest(ReaderCase):
+    """023 spec §7-1 CL-1 — 설명 하나와 멤버 명단. members 응답은 api-notes §2-3의 필드로 합성했다."""
+
+    def test_CL_1_the_description_is_a_string_or_unknown(self) -> None:
+        path = f"{PROJECTS}/{PID}"
+        cases = (
+            ({"id": PID, "description": "제목\n\n![a.png](/files/1)"}, "제목\n\n![a.png](/files/1)"),
+            ({"id": PID, "description": ""}, ""),
+            ({"id": PID}, None),
+            ({"id": PID, "description": None}, None),
+            ({"id": PID, "description": 7}, None),
+        )
+        for result, expected in cases:
+            with self.subTest(result=result):
+                reader, http = self.make_reader({("GET", path): (200, {"result": result}, None)})
+                self.assertEqual(reader.project_description(PID), expected)
+                self.assertEqual([(row.method, row.url.path) for row in http.requests], [("GET", path)])
+
+    def test_CL_1_the_members_are_paged_by_a_hundred_and_say_when_more_remain(self) -> None:
+        path = f"{PROJECTS}/{PID}/members"
+        page = {
+            "result": [
+                {"organizationMemberId": "1000000000000000801", "role": "admin"},
+                {"organizationMemberId": "1000000000000000802", "role": "member"},
+            ],
+            "totalCount": 250,
+        }
+        reader, http = self.make_reader({("GET", path): (200, page, None)})
+        members, more = reader.project_members(PID, max_pages=2)
+        self.assertEqual(len(http.requests), 2)  # max_pages에서 멈춘다
+        self.assertEqual([row.url.params["size"] for row in http.requests], ["100", "100"])
+        self.assertEqual([row.url.params["page"] for row in http.requests], ["0", "1"])
+        self.assertTrue(more)
+        self.assertEqual(
+            members[:2],
+            [
+                models.ProjectMember(id="1000000000000000801", role="admin"),
+                models.ProjectMember(id="1000000000000000802", role="member"),
+            ],
+        )
+
+        short = {"result": page["result"], "totalCount": 2}
+        reader, http = self.make_reader({("GET", path): (200, short, None)})
+        members, more = reader.project_members(PID, max_pages=3)
+        self.assertEqual(len(http.requests), 1)
+        self.assertFalse(more)
+        self.assertEqual([member.role for member in members], ["admin", "member"])
+
+    def test_CL_1_a_full_page_without_a_total_count_may_have_more(self) -> None:
+        # 코드 리뷰 1 L2 — `totalCount`가 없으면 첫 쪽에서 멈춘다. 꽉 찬 쪽이면 더 있는지 모른다 — 더 있다고 본다.
+        path = f"{PROJECTS}/{PID}/members"
+        # `totalCount`가 있고 받은 건수와 같으면(정확히 100명) 잘린 것이 아니다 — 판정식의 둘째 절반(코드 재리뷰 2).
+        for count, total, expected in ((100, None, True), (99, None, False), (100, 100, False)):
+            with self.subTest(count=count, total=total):
+                rows = [{"organizationMemberId": f"10000000000000008{n:02d}", "role": "member"} for n in range(count)]
+                body = {"result": rows} if total is None else {"result": rows, "totalCount": total}
+                reader, http = self.make_reader({("GET", path): (200, body, None)})
+                members, more = reader.project_members(PID, max_pages=3)
+                self.assertEqual(len(http.requests), 1)
+                self.assertEqual(len(members), count)
+                self.assertEqual(more, expected)
+
+    def test_CL_1_a_bent_project_id_never_reaches_the_network(self) -> None:
+        reader, http = self.make_reader({})
+        for bent in ("18/../../drive/v1/drives", "10/posts/20", "10?x=", ""):
+            with self.subTest(bent=bent):
+                with self.assertRaises(errors.InvalidIdError):
+                    reader.project_description(bent)
+                with self.assertRaises(errors.InvalidIdError):
+                    reader.project_members(bent, max_pages=1)
+        self.assertEqual(http.requests, [])
 
 
 class KnownProjectsFileTest(CoreTestCase):

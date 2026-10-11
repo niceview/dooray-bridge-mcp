@@ -125,8 +125,8 @@ class SecurityListsTest(unittest.TestCase):
             if line.startswith("|") and "`" in line
         ]
         # 012 spec §10-2 #28 — 여덟 행. 요청 칸은 (동사, 경로)이고, 동사와 경로가 **함께** 맞는 행이 하나다.
-        # 필드 칸에 백틱이 없으면 빈 집합이다(`set-done` — 본문 없음). 022 — 아홉 행(옮기기).
-        self.assertEqual(len(rows), 9)
+        # 필드 칸에 백틱이 없으면 빈 집합이다(`set-done` — 본문 없음). 022 — 아홉 행(옮기기). 023 — 열 행(프로젝트 설명).
+        self.assertEqual(len(rows), 10)
         used: list[int] = []
         for row in rows:
             cells = [cell.strip() for cell in row.strip().strip("|").split("|")]

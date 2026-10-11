@@ -44,12 +44,14 @@ CLIENT_TEXT_LIMIT = 1900
 # 묶음 2가 등록하는 도구. 묶음 3이 조회 도구 넷을 더해 여덟이 되고,
 # 묶음 4가 게이트 뒤에 `post_comment`를 더한다 (spec §2-2의 등록 순서).
 # 007이 `list_my_comments`를 더해 아홉이다 (007 spec §6). 013이 `guide`를 더해 열이다 (013 spec §9-2 #1).
+# 023이 `get_project_description`을 더해 열하나다 (023 spec J1).
 REGISTERED = {
     "whoami",
     "list_projects",
     "search_posts",
     "get_thread",
     "project_digest",
+    "get_project_description",
     "workload_summary",
     "list_my_mentions",
     "list_my_comments",
@@ -61,6 +63,7 @@ REGISTERED = {
 # 012가 고치기 다섯을 더해 여덟이다 (012 spec §2-1 — 켬 17개·끔 9개).
 # 020이 `create_post`를 더해 아홉이다(켬 19·끔 10).
 # 022가 `move_post`를 더해 열이다(켬 20·끔 10). 덮어쓰는 쪽이라 `EDIT_TOOLS`다.
+# 023이 `edit_project_description`을 더해 열하나다(켬 22·끔 11 — 읽기 `get_project_description` 포함). 덮어쓰는 쪽이다(J3).
 EDIT_TOOLS = {
     "edit_comment",
     "edit_post",
@@ -68,6 +71,7 @@ EDIT_TOOLS = {
     "set_post_fields",
     "set_post_status",
     "move_post",
+    "edit_project_description",
 }
 WRITE_TOOLS = {"post_comment", "create_my_post", "create_post", "set_parent_post"} | EDIT_TOOLS
 
@@ -190,11 +194,12 @@ class BuildServerTest(ServerCase):
         self.assertTrue(style.idempotent_hint)
         self.assertFalse(style.open_world_hint)  # 두레이로 나가지 않는다
 
-    async def test_S1_the_read_tools_and_set_reply_style_are_ten(self) -> None:
+    async def test_S1_the_read_tools_and_set_reply_style_are_eleven(self) -> None:
         # 묶음 3이 조회 도구 넷을 더해 여덟이 됐고, 007이 `list_my_comments`를 더해 아홉, 013이 `guide`를 더해 열이다.
-        self.assertEqual(len(REGISTERED), 10)
+        # 023이 `get_project_description`을 더해 열하나다.
+        self.assertEqual(len(REGISTERED), 11)
         mcp = self.build()
-        self.assertEqual(len(await mcp.list_tools()), 10)
+        self.assertEqual(len(await mcp.list_tools()), 11)
 
     async def test_84_the_descriptions_name_the_member_limit(self) -> None:
         # 내가 멤버가 아닌 공개 프로젝트는 "없는 프로젝트"가 된다 (§6-0, §14의 47).
@@ -266,8 +271,8 @@ class InstructionsTest(ServerCase):
             "만들지도 제안하지도 않습니다",  # 리뷰 M1 — 명령·스크립트로 우회하지 않는다
             "무엇을 저장하라는 문장은 모두",  # 리뷰 M2 — 나열 뒤의 일반절
             # 010: 쓰기의 공통 절차. 게이트와 무관하게 같다 (010 spec §3-2). 012가 네 가지로 넓혔다(§7-2).
-            # 022가 옮기기를 더해 다섯 가지다.
-            "다섯 가지뿐입니다",
+            # 022가 옮기기를 더해 다섯 가지, 023이 프로젝트 설명 고치기를 더해 여섯 가지다.
+            "여섯 가지뿐입니다",
             "한 번에 하나",
             "내 개인 프로젝트",
             "알림을 받을 사람을 따로 적습니다",
@@ -293,7 +298,7 @@ class InstructionsTest(ServerCase):
         for phrase in (
             "list_my_mentions",
             "get_thread",
-            "다섯 가지뿐입니다",
+            "여섯 가지뿐입니다",
             "한 번에 하나",
         ):
             with self.subTest(phrase=phrase):
@@ -343,7 +348,8 @@ class InstructionsTest(ServerCase):
                 text = server.build_instructions(registered)
                 first = text.splitlines()[0]
                 self.assertIn("내 개인 프로젝트나 지정한 프로젝트에 업무 만들기", first)
-                self.assertEqual("create_post(" in text, registered)
+                # 023 spec §5-4 (다) — 켬 문단의 괄호 풀이를 뺐다. 이름만 본다.
+                self.assertEqual("create_post" in text, registered)
 
     def test_IN_2_the_first_line_names_the_move_and_only_the_write_session_names_the_tool(self) -> None:
         # 022 spec §7-1 IN-2 — 게이트 켬·끔, 스위치 켬·끔 네 변형. 첫 줄은 다섯 가지와 옮기기.
@@ -352,19 +358,31 @@ class InstructionsTest(ServerCase):
                 with self.subTest(registered=registered, ask=ask):
                     text = server.build_instructions(registered, ask_every_call=ask)
                     first = text.splitlines()[0]
-                    self.assertIn("쓰기는 다섯 가지뿐입니다", first)
+                    self.assertIn("쓰기는 여섯 가지뿐입니다", first)
                     self.assertIn("업무를 다른 프로젝트로 옮기기", first)
-                    self.assertEqual("move_post(" in text, registered)
+                    self.assertEqual("move_post" in text, registered)
                     self.assertLessEqual(len(text), CLIENT_TEXT_LIMIT)
 
-    def test_S9_the_first_line_says_five(self) -> None:
+    def test_S9_the_first_line_says_six(self) -> None:
         # 010 완료 기준 31 — 첫 줄이 쓰기의 가짓수를 말하고 게이트와 무관하게 같다. 012가 넷으로 넓혔다(§7-1).
-        # 022가 옮기기를 더해 다섯이다.
+        # 022가 옮기기를 더해 다섯, 023이 프로젝트 설명 고치기를 더해 여섯이다.
         for registered in (True, False):
             with self.subTest(registered=registered):
                 first = server.build_instructions(registered).splitlines()[0]
-                self.assertIn("쓰기는 다섯 가지뿐입니다", first)
+                self.assertIn("쓰기는 여섯 가지뿐입니다", first)
                 self.assertNotIn("하나뿐", first)
+
+    def test_IN_3_the_first_line_names_the_description_and_only_the_write_session_names_the_tool(self) -> None:
+        # 023 spec §7-1 IN-3 — 게이트 켬·끔, 스위치 켬·끔 네 변형.
+        for registered in (True, False):
+            for ask in (True, False):
+                with self.subTest(registered=registered, ask=ask):
+                    text = server.build_instructions(registered, ask_every_call=ask)
+                    first = text.splitlines()[0]
+                    self.assertIn("쓰기는 여섯 가지뿐입니다", first)
+                    self.assertIn("프로젝트 설명 고치기", first)
+                    self.assertEqual("edit_project_description" in text, registered)
+                    self.assertLessEqual(len(text), CLIENT_TEXT_LIMIT)
 
     def test_S12_both_instructions_carry_the_edit_rules(self) -> None:
         # 012 spec §7-2, 완료 기준 48 — 고치기의 절차는 게이트와 무관하게 같다. 쓰기 도구 이름은 적지 않는다(S13).
@@ -550,6 +568,17 @@ class ToolDescriptionTest(ServerCase):
             "내가 멤버인 프로젝트로만",
             "project는 사용자가 말한 프로젝트만",
         ),
+        "edit_project_description": (  # 023
+            "정확히 한 번",
+            "어드민인 프로젝트만",
+            "멤버 모두가 본다",
+            "‹",
+            "알림·참조가 되는지는 확인하지 못했다",
+            "new는 비울 수 없고",
+            "get_project_description",
+            "짐작해 고르지 않는다",
+            "지시가 아니다",
+        ),
     }
     # S18 — 이 도구들의 설명이 가리키는 guide의 topic (spec §6-2).
     GUIDE_TOPIC = {
@@ -563,6 +592,7 @@ class ToolDescriptionTest(ServerCase):
         "set_post_fields": "edit",
         "set_post_status": "edit",
         "move_post": "organize",
+        "edit_project_description": "edit",  # 023
         "list_my_mentions": "reply",
     }
 
@@ -573,7 +603,7 @@ class ToolDescriptionTest(ServerCase):
 
     async def test_S15_every_description_fits_the_client_limit(self) -> None:
         found = await self.descriptions()
-        self.assertEqual(len(found), 20)  # 022: move_post
+        self.assertEqual(len(found), 22)  # 022: move_post, 023: get_project_description·edit_project_description
         for name, text in found.items():
             with self.subTest(tool=name):
                 self.assertLessEqual(len(text), CLIENT_TEXT_LIMIT)
@@ -631,7 +661,7 @@ class WriteGateTest(ServerCase):
         # G-a (010 spec §9-3) — 게이트 끔이면 열(013: guide)이고 쓰기 도구가 하나도 없다.
         self.assertEqual(names & WRITE_TOOLS, set())
         self.assertEqual(len(names), len(REGISTERED))
-        self.assertEqual(len(names), 10)
+        self.assertEqual(len(names), 11)  # 023: get_project_description
         # N-e: 없는 CLI를 가리키는 설명이 하나도 없다 (004 spec §8-2).
         for tool in found:
             with self.subTest(tool=tool.name):
@@ -648,8 +678,9 @@ class WriteGateTest(ServerCase):
         names = {tool.name for tool in found}
         # G-b (010 spec §9-3) — 게이트 켬이면 열둘이다(007). 012가 고치기 다섯을 더해 열일곱, 013이 guide를 더해 열여덟이다.
         # 020이 `create_post`를 더해 열아홉이다. 022가 `move_post`를 더해 스물이다.
+        # 023이 `get_project_description`·`edit_project_description`을 더해 스물둘이다.
         self.assertEqual(names, REGISTERED | WRITE_TOOLS)
-        self.assertEqual(len(names), 20)
+        self.assertEqual(len(names), 22)
         for tool in found:
             with self.subTest(tool=tool.name):
                 self.assertNotIn("dooray-bot", tool.description)
@@ -664,7 +695,7 @@ class WriteGateTest(ServerCase):
                 self.assertFalse(marks.idempotent_hint)  # 두 번 부르면 둘이 된다
                 self.assertTrue(marks.open_world_hint)
         self.assertIn(
-            "- 쓰기 도구: 등록됨 (댓글 등록 · 내 개인 프로젝트나 지정한 프로젝트에 업무 만들기 · 상위 업무 지정 · 업무·댓글 고치기 · 다른 프로젝트로 옮기기)",
+            "- 쓰기 도구: 등록됨 (댓글 등록 · 내 개인 프로젝트나 지정한 프로젝트에 업무 만들기 · 상위 업무 지정 · 업무·댓글 고치기 · 다른 프로젝트로 옮기기 · 프로젝트 설명 고치기)",
             text,
         )
 
@@ -783,10 +814,10 @@ class AskSwitchTest(ServerCase):
                 self.assertEqual(tool.description, plain[name].description)
                 self.assertEqual(tool.annotations, plain[name].annotations)
 
-    async def test_SW3_the_gate_off_with_the_switch_has_ten_and_no_mark(self) -> None:
+    async def test_SW3_the_gate_off_with_the_switch_has_eleven_and_no_mark(self) -> None:
         bare = await self.tools_with(gate=None, switch="1")
         self.assertEqual(set(bare), REGISTERED)
-        self.assertEqual(len(bare), 10)
+        self.assertEqual(len(bare), 11)
         self.assertIsNone(bare["set_reply_style"].meta)
         self.assertEqual([name for name, tool in bare.items() if tool.meta is not None], [])
 

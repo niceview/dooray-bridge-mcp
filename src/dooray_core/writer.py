@@ -1,12 +1,13 @@
-"""두레이로 나가는 쓰기 아홉 (010 spec §4, 012 spec §5-4).
+"""두레이로 나가는 쓰기 열 (010 spec §4, 012 spec §5-4).
 
 이 모듈을 import하는 곳은 `mcp_server`의 쓰기 도구 등록부 **하나뿐이다** (제약 4, ADR 007).
 읽기 경로는 이 파일을 import하지 않고, 코드 검색 한 번으로 그것이 증명된다 (§7-2).
 의존 방향은 한쪽이다 — 이 파일이 `client`를 쓰고, `client`는 이 파일을 모른다.
 
-쓰기는 **아홉 요청뿐이다**: 업무 댓글 등록, 업무 만들기(내 개인 프로젝트나 지정한 프로젝트 — ADR 008·018), 상위 업무 지정·해제 (ADR 008),
-업무 수정, 댓글 수정, 업무 전체의 상태, 담당자 한 사람의 상태, 완료 처리 (ADR 012), 업무를 다른 프로젝트로 옮기기 (ADR 020).
-댓글·업무 삭제, 파일, 멤버·태그·마일스톤·프로젝트 목록 자체의 변경,
+쓰기는 **열 요청뿐이다**: 업무 댓글 등록, 업무 만들기(내 개인 프로젝트나 지정한 프로젝트 — ADR 008·018), 상위 업무 지정·해제 (ADR 008),
+업무 수정, 댓글 수정, 업무 전체의 상태, 담당자 한 사람의 상태, 완료 처리 (ADR 012), 업무를 다른 프로젝트로 옮기기 (ADR 020),
+프로젝트 설명 고치기 (ADR 022).
+댓글·업무 삭제, 파일, 멤버·태그·마일스톤·프로젝트 목록 자체의 변경(설명 말고),
 훅 등록은 구현하지 않는다 (제약 3).
 """
 
@@ -359,6 +360,17 @@ class DoorayWriter:
             body=None,
             project_id=str(project_id),
             post_id=str(post_id),
+        )
+
+    def update_project_description(self, *, project_id: str, description: str) -> None:
+        """프로젝트 설명 하나를 바꾼다 (api-notes 023 확인). 1회. 본문 키는 `description` 하나다."""
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("설명이 비어 있습니다.")  # 도구가 먼저 막는다 — 둘째 관문
+        self._t.request(
+            "PUT",
+            f"/project/v1/projects/{path_id(project_id)}",
+            body={"description": description},
+            project_id=str(project_id),
         )
 
     def close(self) -> None:

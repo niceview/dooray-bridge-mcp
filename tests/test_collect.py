@@ -1298,6 +1298,81 @@ class ThreadPeopleFeedTest(CollectCase):
         self.assertEqual(self.paths(http), [logs_path(PID, POST_ID)])
 
 
+# --- 023 — 프로젝트 멤버의 멘션 범위 (spec §2-3, §7-1 CO-1) ---------------------
+
+
+class ProjectPeopleTest(CollectCase):
+    """`project_people` — 명단(이름 없음)의 이름을 채운다. 피드·댓글·`me`를 읽지 않는다."""
+
+    KNOWN = "1000000000000000801"
+
+    def member_routes(self, ids: list[str]) -> dict:
+        return {
+            ("GET", f"{MEMBERS}/{one}"): (200, member_reply(one, f"멤버{one[-2:]}"), None) for one in ids
+        }
+
+    def named_reader(self, ids: list[str]):
+        """`KNOWN`의 이름을 이름표에 넣어 둔 Reader. 넣는 데 쓴 GET 1회는 뒤에서 뺀다."""
+        reader, http = self.make_reader(self.member_routes([self.KNOWN, *ids]))
+        reader.member(self.KNOWN)
+        return reader, http, len(http.requests)
+
+    def test_CO_1_a_known_name_asks_nothing_and_others_are_looked_up(self) -> None:
+        others = ["1000000000000000802", "1000000000000000803"]
+        reader, http, before = self.named_reader(others)
+        members = [
+            models.ProjectMember(id=self.KNOWN, role="admin"),
+            *(models.ProjectMember(id=one, role="member") for one in others),
+            models.ProjectMember(id=self.KNOWN, role="admin"),  # 중복은 한 번
+            models.ProjectMember(id="10/../x", role="member"),  # 모양이 틀린 ID
+        ]
+        found = collect.project_people(reader, members, tenant=TENANT, cut=False, max_lookups=20)
+        looked = self.paths(http)[before:]
+        self.assertEqual(looked, [f"{MEMBERS}/{one}" for one in others])
+        self.assertEqual([person.id for person in found.people], [self.KNOWN, *others])
+        self.assertEqual(found.tenant, TENANT)
+        self.assertFalse(found.feed_read)
+        self.assertFalse(found.comments_cut)
+        self.assertEqual(found.unnamed, 1)  # 모양이 틀린 ID 하나
+
+    def test_CO_1_over_the_limit_asks_nobody(self) -> None:
+        strangers = [f"10000000000000008{n:02d}" for n in range(2, 23)]  # 이름표에 없는 21명
+        reader, http, before = self.named_reader(strangers)
+        members = [models.ProjectMember(id=one, role="member") for one in [self.KNOWN, *strangers]]
+        found = collect.project_people(reader, members, tenant=TENANT, cut=False, max_lookups=20)
+        self.assertEqual(self.paths(http)[before:], [])  # 이름 GET 0
+        self.assertEqual([person.id for person in found.people], [self.KNOWN])
+        self.assertEqual(found.unnamed, 21)
+
+        # 상한과 같으면 모두 조회한다.
+        reader, http, before = self.named_reader(strangers[:20])
+        members = [models.ProjectMember(id=one, role="member") for one in strangers[:20]]
+        found = collect.project_people(reader, members, tenant=TENANT, cut=False, max_lookups=20)
+        self.assertEqual(len(self.paths(http)[before:]), 20)
+        self.assertEqual(found.unnamed, 0)
+
+    def test_CO_1_a_cut_roster_asks_nobody(self) -> None:
+        others = ["1000000000000000802"]
+        reader, http, before = self.named_reader(others)
+        members = [models.ProjectMember(id=one, role="member") for one in [self.KNOWN, *others]]
+        found = collect.project_people(reader, members, tenant=None, cut=True, max_lookups=20)
+        self.assertEqual(self.paths(http)[before:], [])  # 이름 GET 0
+        self.assertTrue(found.comments_cut)
+        self.assertEqual(found.unnamed, 1)
+        self.assertEqual([person.id for person in found.people], [self.KNOWN])
+        self.assertIsNone(found.tenant)
+
+    def test_CO_1_a_failed_lookup_is_counted(self) -> None:
+        reader, http = self.make_reader(
+            {("GET", f"{MEMBERS}/1000000000000000802"): (404, {"header": {"isSuccessful": False}}, None)}
+        )
+        members = [models.ProjectMember(id="1000000000000000802", role="member")]
+        found = collect.project_people(reader, members, tenant=TENANT, cut=False, max_lookups=20)
+        self.assertEqual(found.people, ())
+        self.assertEqual(found.unnamed, 1)
+        self.assertEqual(len(http.requests), 1)
+
+
 # --- 007 — 내가 쓴 댓글 (spec §6-2, §8-2의 F 계열) ------------------------------
 
 
