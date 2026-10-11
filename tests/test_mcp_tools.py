@@ -3471,6 +3471,16 @@ class MentionDescriptionTest(ServerCase):
         # N_b′ (013 spec §9-1, 완료 기준 22) — 안내문에서 빠진 초안의 모양을 흐름의 첫 도구가 이름으로 남긴다.
         self.assertIn("결론 한 줄 + 불릿", text)
 
+    async def test_BA_6_the_read_side_descriptions_do_not_promise_the_mark(self) -> None:
+        # 021 spec §2-9 — 표시는 등록에서 뺄 수 있다. 말투 저장 설명이 표시를 단정하지 않는다.
+        mcp = self.build(write=False)
+        found = {tool.name: tool.description for tool in await mcp.list_tools()}
+        style = found["set_reply_style"]
+        self.assertIn("등록에서 빼지 않았으면(기본)", style)
+        self.assertNotIn("표시되어 있다", style)
+        mentions = found["list_my_mentions"]
+        self.assertIn("한 번에 업무 하나다(호출 한 번에).", mentions)
+
     async def test_N_c_the_two_when_lines_are_still_there(self) -> None:
         # 새 문단이 설명의 구조를 깨지 않았다 (S2가 전 도구를 본다).
         text = await self.description()

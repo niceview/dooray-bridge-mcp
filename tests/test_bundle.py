@@ -115,6 +115,13 @@ class ManifestTest(unittest.TestCase):
         self.assertNotIn("매번 허락", text)
         self.assertIn("SECURITY.md", read_manifest()["description"])
 
+    def test_MF_1_the_manifest_has_no_ask_switch(self) -> None:
+        # 021 spec §2-4(J11) — 번들에는 허락 표시를 빼는 칸이 없다. 확장의 서버는 언제나 표시를 붙인다.
+        text = MANIFEST.read_text(encoding="utf-8")
+        for needle in ("SKIP_WRITE_ASK", "skip_write_ask"):
+            with self.subTest(needle=needle):
+                self.assertNotIn(needle, text)
+
     def test_B2_the_environment_holds_three_keys_and_a_fixed_gate(self) -> None:
         manifest = read_manifest()
         env = manifest["server"]["mcp_config"]["env"]

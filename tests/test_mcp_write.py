@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import inspect
 import json
 import os
+import threading
 import unittest
 from unittest import mock
 
@@ -1263,15 +1265,15 @@ class NewToolGateTest(ServerCase):
         mcp = self.build(write=False)
         names = {tool.name for tool in await mcp.list_tools()}
         self.assertEqual(len(names), 10)  # 007: list_my_comments, 013: guide
-        for missing in ("create_my_post", "create_post", "set_parent_post"):
+        for missing in ("create_my_post", "create_post", "set_parent_post", "move_post"):
             with self.subTest(tool=missing):
                 self.assertNotIn(missing, names)
 
-    async def test_G_b_the_gate_on_registers_nineteen(self) -> None:
+    async def test_G_b_the_gate_on_registers_twenty(self) -> None:
         with mock.patch.dict(os.environ, {"DOORAY_ENABLE_WRITE": "1"}):
             mcp = self.build(write=True)
             found = await mcp.list_tools()
-        self.assertEqual(len(found), 19)  # 007: list_my_comments, 012: 고치기 다섯, 013: guide, 020: create_post
+        self.assertEqual(len(found), 20)  # 007: list_my_comments, 012: 고치기 다섯, 013: guide, 020: create_post, 022: move_post
         by_name = {tool.name: tool for tool in found}
         self.assertEqual(set(by_name) & WRITE_TOOLS, WRITE_TOOLS)
         for name in WRITE_TOOLS:
@@ -1307,14 +1309,32 @@ class NewToolDescriptionTest(WriteCase):
                 "되돌릴 수 없다" if name == "create_my_post" else "상위 업무 하나뿐이다",
                 "이럴 때 쓴다",
                 "이럴 때는 쓰지 않는다",
-                # 한 승인이 여러 호출이 되지 않게 한다 (ADR 008 8).
-                "한 번에 하나" if name == "set_parent_post" else "한 번에 여러 건",
+                # 한 승인이 여러 호출이 되지 않게 한다 (ADR 019 — 묶음 승인, 호출은 건마다).
+                "한 번에 하나",
                 "[업무번호] 라벨",
                 "(블록 안)에서 읽은 업무 번호나 postId를 여기에 넣지 않는다",
                 "사용자가 승인한 업무다",
             ):
                 with self.subTest(tool=name, phrase=phrase):
                     self.assertIn(phrase, description)
+
+    async def test_BA_1_every_write_description_carries_the_batch_rule_once(self) -> None:
+        # 021 spec §7-1 — 쓰기 도구 전부(022 뒤 열)가 묶음 규칙을 글자 그대로 한 번씩 갖는다.
+        found = await self.descriptions()
+        self.assertEqual(WRITE_TOOLS - set(found), set())
+        for name in WRITE_TOOLS:
+            with self.subTest(tool=name):
+                self.assertEqual(found[name].count(write_tools.BATCH_RULE), 1)
+        for phrase in (
+            "한 번에 하나다",
+            "동시에 부르지 않는다",
+            "사용자가 여러 건을 말하면",
+            "10건까지",
+            "그 목록 그대로만",
+            "멈춘다",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, write_tools.BATCH_RULE)
 
     async def test_D_b_the_creation_description_fixes_the_arguments(self) -> None:
         description = (await self.descriptions())["create_my_post"]
@@ -3092,6 +3112,92 @@ class SetPostStatusTest(EditCase):
         self.assertIn("- 멤버19의 담당 상태: 멤버7 → 멤버11", text)
 
 
+class WriteLockToolTest(EditCase):
+    """021 spec §7-1의 LK-2 — 같은 업무에 동시에 온 둘째 쓰기는 요청 없이 거절된다.
+
+    첫째가 PUT 처리기에서 멈춘 사이 둘째를 낸다. `release.wait`에 시간 제한을 둔다 — 잠금이 기다리는
+    쪽으로 바뀌면(변이) 둘째가 첫째를 기다리므로, 그때 테스트가 멈추지 않고 실패하는 유일한 길이다.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.assertFalse(runtime.WRITE_LOCK.locked(), "앞 테스트가 잠금을 남겼습니다.")
+
+    async def two_at_once(self, name: str, first: dict, second: dict, routes: dict) -> None:
+        transport = self.use_write_routes(routes)
+        original = transport.handler
+        entered = threading.Event()
+        release = threading.Event()
+
+        def held(request: httpx2.Request) -> httpx2.Response:
+            # 첫 PUT에서 멈춘다. 장부(`ledger`)를 쥐기 **전에** 멈춘다 — 둘째가 장부에서 막히지 않게.
+            if request.method == "PUT" and not entered.is_set():
+                entered.set()
+                release.wait(10)
+            return original(request)
+
+        self.enterContext(mock.patch.object(transport, "handler", held))
+        mcp = self.build(write=True)
+        running = asyncio.create_task(mcp.call_tool(name, first))
+        try:
+            self.assertTrue(await asyncio.to_thread(entered.wait, 5))
+            before = len(transport.requests)
+            with self.assertRaises(ToolError) as caught:
+                self.record(await mcp.call_tool(name, second))
+            self.assertTrue(
+                self.record(str(caught.exception)).endswith(runtime.WRITE_BUSY_MESSAGE),
+                str(caught.exception),
+            )
+            self.assertEqual(len(transport.requests), before)  # 둘째가 낸 요청 0건
+        finally:
+            release.set()
+            outcome = (await asyncio.gather(running, return_exceptions=True))[0]
+        self.assertNotIsInstance(outcome, BaseException)
+        self.assertFalse(outcome.is_error)
+        first_puts = [index for index, row in enumerate(transport.requests) if row.method == "PUT"]
+        self.assertEqual(len(first_puts), 1)
+        self.assertFalse(runtime.WRITE_LOCK.locked())
+        # 첫째가 끝난 뒤 둘째를 다시 부른다(순차). 둘째의 첫 읽기가 첫째의 쓰기보다 뒤다 — 유실 없음.
+        split = len(transport.requests)
+        again = await mcp.call_tool(name, second)
+        self.assertFalse(again.is_error)
+        self.assertEqual(transport.requests[split].method, "GET")
+        self.assertLess(first_puts[0], split)
+        self.assertEqual(
+            len([row for row in transport.requests[split:] if row.method == "PUT"]), 1
+        )
+        busy = [row for row in self.audit_lines() if row["kind"] == "tool" and row["error"] == "WriteBusy"]
+        self.assertEqual(len(busy), 1)
+        self.assertEqual(busy[0]["tool"], name)
+        self.assertEqual(busy[0]["calls"], 0)
+
+    async def test_LK2_two_people_changes_at_once(self) -> None:
+        routes = self.edit_routes(
+            members_only(),
+            extra={
+                ("GET", MEMBERS): [
+                    (200, found_members((HONG_ID, "가")), None),
+                    (200, found_members(("1000000000000000202", "나")), None),
+                ]
+            },
+        )
+        await self.two_at_once(
+            "set_post_people",
+            {"post": POST_ID, "add_cc": "가"},
+            {"post": POST_ID, "add_cc": "나"},
+            routes,
+        )
+
+    async def test_LK2_two_post_edits_at_once(self) -> None:
+        routes = self.edit_routes(detail_with(body={"mimeType": "text/x-markdown", "content": PLAIN_BODY}))
+        await self.two_at_once(
+            "edit_post",
+            {"post": POST_ID, "old": "내일", "new": "모레"},
+            {"post": POST_ID, "subject": "새 제목"},
+            routes,
+        )
+
+
 class EditCommonTest(EditCase):
     """X-1~X-3·X-5~X-8, D-e (spec §10-1)."""
 
@@ -3278,6 +3384,7 @@ class EditCommonTest(EditCase):
             "set_post_people": ("멤버 ID는 받지 않는다", "알림", "둘 다"),
             "set_post_fields": ("2026-09-30T18:00:00+09:00", '"none"', "highest"),
             "set_post_status": ("assignee", "me", "closed", "done"),
+            "move_post": ("새 번호로", "subposts", "내가 멤버인 프로젝트로만"),  # 022
         }
         for name in EDIT_TOOLS:
             for phrase in (*common, *own[name]):
@@ -3765,6 +3872,9 @@ class PersonalCodeFallbackWriteTest(WriteCase):
                 {"project": HONG_CODE, "subject": SUBJECT, "body": BODY, "parent": "hong.gd/5"},
                 False,
             ),
+            # 022 MV-22 — 업무(@ 없음)에서 멈춘다. 둘째는 업무는 찾고 옮길 곳(@ 없음)에서 멈춘다.
+            ("move_post", {"post": "hong.gd/12", "project": "sample", "subposts": 0}, False),
+            ("move_post", {"post": f"{HONG_CODE}/12", "project": "hong.gd", "subposts": 0}, False),
         )
         for name, arguments, create in cases:
             with self.subTest(tool=name, arguments=arguments):
@@ -4772,7 +4882,7 @@ class CreatePostTest(EditCase):
             "내가 멤버인 프로젝트에만",
             "그 프로젝트의 사람들이 보게 된다",
             "한 번에 하나다",
-            "다섯 번의 승인",
+            "10건까지",
             "create_my_post를 쓴다",
             "필수 태그 그룹",
             "누구에게 알리는지는 확인하지 못했다",
@@ -4819,6 +4929,749 @@ class CreatePostTest(EditCase):
 
     def test_CP_24_the_tool_is_synchronous(self) -> None:
         self.assertFalse(inspect.iscoroutinefunction(write_tools.create_post))
+
+
+
+# --- 022 — 업무 옮기기 (spec §7-1의 MV) ---
+
+
+class RereadPathTest(EditCase):
+    """022 spec §7-1의 RD-1 — 고치기의 다시 읽기는 여전히 프로젝트 경로다(`_reread`의 기본값)."""
+
+    async def test_RD_1_an_edit_rereads_on_the_project_path(self) -> None:
+        transport, text = await self.run_tool("set_post_fields", {"post": POST_ID, "priority": "low"})
+        self.assertTrue(text.startswith(write_tools.FIELDS_CHANGED), text)
+        sent = [(row.method, row.url.path) for row in transport.requests]
+        self.assertEqual(sent[0], ("GET", BARE))  # 해석은 프로젝트 없는 경로
+        write_at = sent.index(("PUT", EDIT_PATH))
+        after = [path for method, path in sent[write_at + 1 :] if method == "GET"]
+        self.assertEqual(after, [EDIT_PATH])  # 쓴 뒤 다시 읽기 — 프로젝트 경로
+        self.assertNotIn(BARE, after)
+
+
+
+MV_SRC_PID = "1000000000000000180"  # code sample, public, 멤버 — 옮길 업무의 프로젝트
+MV_DEST_PID = "1000000000000000181"  # code other, public, 멤버 — 옮길 곳
+MV_POST = "1000000000000000182"  # sample/13, 상위 없음
+MV_CHILD = "1000000000000000183"  # sample/14, 상위 MV_POST
+MV_PARENT = "1000000000000000184"  # sample/12 — MV-11의 옛 상위
+MV_TWIN_PID = "1000000000000000185"  # code other, 비멤버 — 같은 code·다른 ID
+MV_SEEN_PID = "1000000000000000186"  # code seen, 비멤버 — 활동에서만 보인 프로젝트
+MV_TAG = "1000000000000000187"
+MV_SEEN_POST = "1000000000000000188"
+MV_MINE_POST = "1000000000000000189"  # 내 개인 프로젝트(MINE)의 업무
+MV_ANSWER_PID = "1000000000000000999"  # 이동 응답의 project.id — 어느 프로젝트와도 다르다(실측을 흉내)
+MY_ID = "1000000000000000001"  # fixture members_me
+OTHER_ID = "1000000000000000003"  # post_json의 기본 작성자
+MV_SRC_POSTS = posts_path(MV_SRC_PID)
+MV_DEST_POSTS = posts_path(MV_DEST_PID)
+MV_DETAIL = f"{MV_SRC_POSTS}/{MV_POST}"
+MV_BARE = f"/project/v1/posts/{MV_POST}"
+MV_MOVE = f"{MV_DETAIL}/move"
+MV_SRC_TAGS = f"{PROJECTS}/{MV_SRC_PID}/tags"
+MV_SUBJECT = "옮길-업무-제목-5521"
+MV_TAG_NAME = "검토-태그-881"
+
+
+def mv_post(
+    number: int,
+    *,
+    post_id: str = MV_POST,
+    project_id: str = MV_SRC_PID,
+    code: str = "sample",
+    parent: tuple[str, int] | None = None,
+    tag_ids: tuple[str, ...] = (),
+    milestone: str | None = None,
+    author: str | None = OTHER_ID,
+    author_name: str = "멤버2",
+    workflow: tuple[str, str] = ("1000000000000000009", "진행중"),
+) -> dict:
+    """`post_json`의 dict에 상위·태그·마일스톤·작성자를 더한다. `post_json`은 고치지 않는다."""
+    row = post_json(
+        number,
+        post_id=post_id,
+        subject=MV_SUBJECT,
+        project_id=project_id,
+        code=code,
+        workflow=workflow,
+        author=author or OTHER_ID,
+    )
+    if parent is not None:
+        row["parent"] = {"id": parent[0], "number": parent[1], "subject": "옛 상위 제목"}
+    row["tags"] = [{"id": tag} for tag in tag_ids]
+    if milestone is not None:
+        row["milestone"] = {"id": "1000000000000000121", "name": milestone}
+    if author is None:
+        del row["users"]["from"]  # 작성자 정보 없음(메일 사용자 등)
+    else:
+        row["users"]["from"]["member"]["name"] = author_name
+    return row
+
+
+def mv_children(count: int, *, project_id: str = MV_SRC_PID, total: int | None = None) -> dict:
+    rows = [post_json(20 + n, post_id=f"10000000000000004{n:02d}", project_id=project_id) for n in range(count)]
+    return reply(rows, total=count if total is None else total)
+
+
+def mv_members(*, dest: dict | None = None) -> list[dict]:
+    return [project_json(MV_SRC_PID, "sample"), project_json(MV_DEST_PID, "other") if dest is None else dest]
+
+
+def move_routes_022(
+    *,
+    post: dict | None = None,
+    after: dict | None = None,
+    by_number: bool = True,
+    children: dict | None = None,
+    dest_children: dict | None = None,
+    dest_pid: str = MV_DEST_PID,
+    members: list[dict] | None = None,
+    private: list[dict] | None = None,
+    extra: dict | None = None,
+) -> dict:
+    """옮기는 길: 프로젝트 목록(2) → (번호→ID) → 단건 → 하위 세기 → 옮기기 → 프로젝트 없는 단건 → (다시 세기).
+
+    같은 목록 경로에 번호 조회와 하위 목록이 이 순서로 온다. 단언은 쿼리로 가른다.
+    postId로 부르면(`by_number=False`) 처음 해석도 프로젝트 없는 단건이라 그 경로는 [옮기기 전, 옮긴 뒤]다.
+    """
+    detail = mv_post(13) if post is None else post
+    source = detail["project"]["id"]
+    post_id = detail["id"]
+    moved = mv_post(9, post_id=post_id, project_id=dest_pid, code="other") if after is None else after
+    kids = mv_children(0, project_id=source) if children is None else children
+    routes = personal_routes(
+        members=mv_members() if members is None else members,
+        private=[personal_row(MINE, "@personal")] if private is None else private,
+    )
+    listed = posts_path(source)
+    child_reply = (200, kids, None)
+    routes[("GET", listed)] = [(200, reply([detail], total=1), None), child_reply] if by_number else [child_reply]
+    routes[("GET", f"{listed}/{post_id}")] = (200, reply(detail), None)
+    bare = f"/project/v1/posts/{post_id}"
+    routes[("GET", bare)] = (
+        (200, reply(moved), None) if by_number else [(200, reply(detail), None), (200, reply(moved), None)]
+    )
+    routes[("POST", f"{listed}/{post_id}/move")] = (
+        200,
+        reply({"post": {"id": post_id}, "project": {"id": MV_ANSWER_PID}}),
+        None,
+    )
+    routes[("GET", posts_path(dest_pid))] = (200, kids if dest_children is None else dest_children, None)
+    routes[("GET", f"{PROJECTS}/{source}/tags")] = (
+        200,
+        reply([{"id": MV_TAG, "name": MV_TAG_NAME, "color": "red"}], total=1),
+        None,
+    )
+    routes.update(extra or {})
+    return routes
+
+
+class MovePostTest(EditCase):
+    """022 spec §7-1의 MV-1~MV-27."""
+
+    def paths(self, transport) -> list[tuple[str, str]]:
+        return [(row.method, row.url.path) for row in transport.requests]
+
+    def gets_with(self, transport, key: str) -> list:
+        return [row for row in transport.requests if row.method == "GET" and key in row.url.params]
+
+    def count_of(self, transport, method: str, path: str) -> int:
+        return self.paths(transport).count((method, path))
+
+    def forget_logs(self) -> None:
+        for path in (self.home / "logs").glob("*.jsonl"):
+            path.unlink()
+
+    async def move(self, routes: dict, **arguments: object):
+        self.writers.clear()
+        self.forget_logs()
+        values = {"post": "sample/13", "project": "other", "subposts": 0, **arguments}
+        return await self.run_tool("move_post", values, routes)
+
+    async def move_refused(self, routes: dict, **arguments: object):
+        self.writers.clear()
+        self.forget_logs()
+        values = {"post": "sample/13", "project": "other", "subposts": 0, **arguments}
+        return await self.refused("move_post", values, routes)
+
+    def assertCallsCounted(self, transport) -> None:
+        # 020 CP-19와 같다 — `finally`의 `call.count(made)`가 빠지면 잡힌다.
+        self.assertEqual(self.tool_line()["calls"], len(transport.requests))
+
+    def assertNotMoved(self, transport) -> None:
+        self.assertEqual([row for row in transport.requests if row.method == "POST"], [])
+        self.assertNothingWritten(transport)
+
+    # --- 성공 ---
+
+    async def test_MV_1_one_move_to_a_team_project(self) -> None:
+        with mock.patch.dict(os.environ, {"DOORAY_WEB_BASE": WEB_BASE}):
+            transport, text = await self.move(move_routes_022())
+        self.assertEqual(
+            self.paths(transport),
+            [
+                ("GET", PROJECTS),
+                ("GET", PROJECTS),
+                ("GET", MV_SRC_POSTS),
+                ("GET", MV_DETAIL),
+                ("GET", MV_SRC_POSTS),
+                ("POST", MV_MOVE),
+                ("GET", MV_BARE),
+            ],
+        )
+        self.assertEqual(len(self.gets_with(transport, "postNumber")), 1)
+        self.assertEqual(len(self.gets_with(transport, "parentPostId")), 1)
+        self.assertEqual(self.sent(transport), {"targetProjectId": MV_DEST_PID, "includeSubPosts": True})
+        lines = text.splitlines()
+        self.assertEqual(lines[0], write_tools.MOVE_POST_DONE)
+        self.assertIn(f"- 업무: [other/9] {MV_SUBJECT}", lines)
+        self.assertIn("- 옮긴 곳: sample → other", lines)
+        self.assertIn(write_tools.MOVE_POST_OLD_NUMBER.format(old="sample/13"), lines)
+        self.assertIn(write_tools.MOVE_POST_NO_CHILDREN, lines)
+        self.assertIn(
+            write_tools.MOVE_POST_UNDO.format(new="other/9", source="sample", count=0), lines
+        )
+        self.assertIn(f"- 업무 링크: {WEB_BASE}/project/tasks/{MV_POST}", lines)
+        self.assertEqual(self.count_of(transport, "GET", ME), 0)
+        self.assertCallsCounted(transport)
+        self.assertTrue(self.tool_line()["ok"])
+        self.assertEqual(len(self.writers), 1)
+        self.assertTrue(self.writers[0].close.called)
+
+    async def test_MV_2_a_post_id_is_read_first_then_the_projects(self) -> None:
+        transport, text = await self.move(move_routes_022(by_number=False), post=MV_POST)
+        self.assertEqual(
+            self.paths(transport),
+            [
+                ("GET", MV_BARE),
+                ("GET", PROJECTS),
+                ("GET", PROJECTS),
+                ("GET", MV_SRC_POSTS),
+                ("POST", MV_MOVE),
+                ("GET", MV_BARE),
+            ],
+        )
+        self.assertEqual(self.gets_with(transport, "postNumber"), [])
+        self.assertEqual(len(self.gets_with(transport, "parentPostId")), 1)
+        self.assertEqual(self.sent(transport), {"targetProjectId": MV_DEST_PID, "includeSubPosts": True})
+        self.assertIn("- 업무: [other/9]", text)
+        self.assertCallsCounted(transport)
+
+    # --- 옮길 곳·원래 프로젝트 ---
+
+    async def test_MV_3_an_unknown_destination_is_not_guessed(self) -> None:
+        for project, name in (("없는프로젝트", "없는프로젝트"), ("personal", "personal")):
+            with self.subTest(project=project):
+                transport, text = await self.move(move_routes_022(), project=project)
+                self.assertIn(tools.PROJECT_NOT_FOUND.format(name=name), text)
+                self.assertIn(tools.PERSONAL_CODE_HINT, text)
+                self.assertNotIn(tools.PERSONAL_CODE_USED.split("{", 1)[0], text)
+                self.assertEqual(text.splitlines()[-1], write_tools.PROJECT_CONFIRM_FIRST)
+                self.assertEqual(self.gets_with(transport, "parentPostId"), [])
+                self.assertNotMoved(transport)
+
+    async def test_MV_4_two_member_projects_with_the_same_name(self) -> None:
+        members = mv_members() + [project_json(MV_TWIN_PID, "other")]
+        transport, text = await self.move(move_routes_022(members=members))
+        self.assertIn(write_tools.MOVE_POST_AMBIGUOUS.format(count=2), text)
+        self.assertIn(f"| other | {MV_TWIN_PID} |", text)
+        self.assertEqual(text.splitlines()[-1], write_tools.PROJECT_CONFIRM_FIRST)
+        self.assertEqual(self.gets_with(transport, "parentPostId"), [])
+        self.assertNotMoved(transport)
+
+    async def test_MV_5_a_destination_seen_only_in_activity_is_refused(self) -> None:
+        client.save_known_projects(
+            [models.parse_project(row) for row in mv_members()],
+            seen=[
+                models.parse_project({"id": MV_TWIN_PID, "code": "other"}),
+                models.parse_project({"id": MV_SEEN_PID, "code": "seen"}),
+            ],
+        )
+        tagged = mv_post(13, tag_ids=(MV_TAG,))
+        for project, code in (("seen", "seen"), (MV_SEEN_PID, "seen"), (MV_TWIN_PID, "other")):
+            with self.subTest(project=project):
+                transport, text = await self.move(move_routes_022(post=tagged), project=project)
+                self.assertEqual(text, write_tools.MOVE_POST_NOT_MEMBER.format(code=code))
+                self.assertEqual(self.gets_with(transport, "parentPostId"), [])
+                self.assertEqual(self.count_of(transport, "GET", MV_SRC_TAGS), 0)
+                self.assertNotMoved(transport)
+        # 이름으로 주면 멤버 쪽 하나로 걸러져 그 ID로 옮긴다 — 모호로 멈추지 않는다.
+        transport, text = await self.move(move_routes_022(post=tagged), project="other")
+        self.assertEqual(self.sent(transport)["targetProjectId"], MV_DEST_PID)
+        self.assertTrue(text.startswith(write_tools.MOVE_POST_DONE), text)
+
+    async def test_MV_6_a_post_outside_my_projects_is_refused(self) -> None:
+        client.save_known_projects(
+            [models.parse_project(row) for row in mv_members()],
+            seen=[
+                models.parse_project({"id": MV_TWIN_PID, "code": "other"}),
+                models.parse_project({"id": MV_SEEN_PID, "code": "seen"}),
+            ],
+        )
+        seen_post = mv_post(5, post_id=MV_SEEN_POST, project_id=MV_SEEN_PID, code="seen")
+        twin_post = mv_post(5, post_id=MV_SEEN_POST, project_id=MV_TWIN_PID, code="other")
+        for post, detail, by_number, label, code in (
+            (MV_SEEN_POST, seen_post, False, "seen/5", "seen"),
+            ("seen/5", seen_post, True, "seen/5", "seen"),
+            (MV_SEEN_POST, twin_post, False, "other/5", "other"),
+        ):
+            with self.subTest(post=post, code=code):
+                routes = move_routes_022(post=detail, by_number=by_number)
+                transport, text = await self.move(routes, post=post, project="sample")
+                self.assertEqual(
+                    text, write_tools.MOVE_SOURCE_NOT_MEMBER.format(label=label, code=code)
+                )
+                self.assertEqual(self.gets_with(transport, "parentPostId"), [])
+                self.assertNotMoved(transport)
+
+    async def test_MV_7_the_same_project_sends_nothing(self) -> None:
+        tagged = mv_post(13, tag_ids=(MV_TAG,))
+        mine = mv_post(3, post_id=MV_MINE_POST, project_id=MINE, code="@personal", tag_ids=(MV_TAG,))
+        cases = (
+            (move_routes_022(post=tagged), "sample/13", "sample", "sample/13", "sample"),
+            (move_routes_022(post=tagged), "sample/13", MV_SRC_PID, "sample/13", "sample"),
+            (
+                move_routes_022(post=mine, by_number=False),
+                MV_MINE_POST,
+                "@personal",
+                "@personal/3",
+                "@personal",
+            ),
+        )
+        for routes, post, project, label, code in cases:
+            with self.subTest(project=project):
+                transport, text = await self.move(routes, post=post, project=project)
+                self.assertEqual(text, write_tools.MOVE_POST_SAME.format(label=label, code=code))
+                self.assertEqual(self.gets_with(transport, "parentPostId"), [])
+                self.assertEqual(
+                    [row for row in transport.requests if row.url.path.endswith("/tags")], []
+                )
+                self.assertNotMoved(transport)
+
+    async def test_MV_8_bent_values_never_reach_a_path(self) -> None:
+        for project in ("10/posts/20/set-done?x=", "..", "sample/../x"):
+            with self.subTest(project=project):
+                transport, text = await self.move(move_routes_022(), project=project)
+                self.assertIn("프로젝트를 찾지 못했습니다", text)
+                self.assertNotMoved(transport)
+        transport, message = await self.move_refused(move_routes_022(), post="20/../../x")
+        self.assertEqual(transport.requests, [])
+        self.assertEqual(len(self.writers), 0)
+
+    async def test_MV_9_the_arguments_are_checked_before_any_request(self) -> None:
+        cases = (
+            {"post": ""},
+            {"post": "   "},
+            {"post": "x" * 201},
+            {"project": ""},
+            {"project": "   "},
+            {"project": "x" * 201},
+            {"subposts": -1},
+            {"subposts": 1001},
+        )
+        for arguments in cases:
+            with self.subTest(arguments=str(arguments)[:40]):
+                transport, _ = await self.move_refused(move_routes_022(), **arguments)
+                self.assertEqual(transport.requests, [])
+                self.assertEqual(len(self.writers), 0)
+        # `True`는 SDK가 인자 검사에서 1로 바꿔 넘긴다(pydantic의 느슨한 변환 — 도구는 정수 1을 받는다).
+        # 그래서 도구 앞에서는 막히지 않고, 센 건수(0)와 달라 쓰기 0으로 끝난다. 정수 검사 자체는 불리언을 거절한다.
+        with self.assertRaises(ToolError):
+            runtime.check_int(True, name="subposts", low=0, high=1000)
+        transport, text = await self.move(move_routes_022(), subposts=True)
+        self.assertEqual(text, write_tools.MOVE_POST_SUBPOSTS_DIFFER.format(label="sample/13", count=0))
+        self.assertNotMoved(transport)
+
+    # --- 하위 업무 ---
+
+    async def test_MV_10_the_subposts_are_counted_in_the_source_project(self) -> None:
+        for count, total, shown, line in (
+            (2, None, 2, "- 함께 간 하위 업무: 2건"),
+            (0, None, 0, write_tools.MOVE_POST_NO_CHILDREN),
+            (100, 150, 150, "- 함께 간 하위 업무: 150건"),
+        ):
+            with self.subTest(count=count, total=total):
+                kids = mv_children(count, total=total)
+                routes = move_routes_022(
+                    children=kids, dest_children=mv_children(count, project_id=MV_DEST_PID, total=total)
+                )
+                transport, text = await self.move(routes, subposts=shown)
+                counted = self.gets_with(transport, "parentPostId")
+                self.assertEqual(counted[0].url.path, MV_SRC_POSTS)
+                self.assertEqual(counted[0].url.params["parentPostId"], MV_POST)
+                self.assertNotIn("postNumber", counted[0].url.params)
+                self.assertTrue(text.startswith(write_tools.MOVE_POST_DONE), text)
+                self.assertIn(line, text)
+                self.assertIn(f"subposts={shown})", text)
+                self.assertCallsCounted(transport)
+
+    async def test_MV_11_a_subpost_loses_its_parent_and_says_so(self) -> None:
+        child = mv_post(13, parent=(MV_PARENT, 12))
+        transport, text = await self.move(move_routes_022(post=child))
+        self.assertEqual(len([row for row in transport.requests if row.method == "POST"]), 1)
+        self.assertIn(write_tools.MOVE_POST_PARENT_CUT.format(parent="sample/12"), text)
+        self.assertIn(write_tools.MOVE_POST_UNDO_PARENT.format(parent="sample/12"), text)
+        # 다시 읽은 업무에 상위가 남아 있으면 남았다고 적는다 — 라벨은 옮기기 전의 것이다.
+        kept = mv_post(9, project_id=MV_DEST_PID, code="other", parent=(MV_PARENT, 12))
+        transport, text = await self.move(move_routes_022(post=child, after=kept))
+        self.assertIn(write_tools.MOVE_POST_PARENT_KEPT.format(parent="sample/12"), text)
+        self.assertNotIn("other/12", text)
+        self.assertNotIn(write_tools.MOVE_POST_PARENT_CUT.split("[", 1)[0] + "[sample/12]와", text)
+        self.assertNotIn("set_parent_post(parent=", text)
+
+    async def test_MV_12_tag_names_come_from_the_source_project_only(self) -> None:
+        tagged = mv_post(13, tag_ids=(MV_TAG,))
+        transport, text = await self.move(move_routes_022(post=tagged))
+        tag_reads = [path for method, path in self.paths(transport) if path.endswith("/tags")]
+        self.assertEqual(tag_reads, [MV_SRC_TAGS])
+        self.assertIn(f"- 태그: 옮기기 전 {MV_TAG_NAME} → 지금 0개", text)
+        undo = [line for line in text.splitlines() if line.startswith("- 되돌리려면:")]
+        self.assertEqual(len(undo), 1)
+        self.assertTrue(undo[0].endswith(write_tools.MOVE_POST_UNDO_TAGS), undo)
+        # 태그가 없으면 태그 목록을 읽지 않고, 태그 줄도 되돌리기의 태그 문장도 없다.
+        transport, text = await self.move(move_routes_022())
+        self.assertEqual([path for _, path in self.paths(transport) if path.endswith("/tags")], [])
+        self.assertNotIn("- 태그:", text)
+        self.assertNotIn(write_tools.MOVE_POST_UNDO_TAGS, text)
+
+    # --- 다시 읽기·실패 ---
+
+    async def test_MV_13_the_reread_is_project_free_and_the_answer_id_is_ignored(self) -> None:
+        transport, text = await self.move(move_routes_022())
+        gets_after = [path for method, path in self.paths(transport)[-1:] if method == "GET"]
+        self.assertEqual(gets_after, [MV_BARE])
+        self.assertNotIn(MV_ANSWER_PID, text)
+        self.assertNotIn(MV_ANSWER_PID, self.audit_text())
+        self.assertIn("- 옮긴 곳: sample → other", text)
+
+    async def test_MV_14_a_failed_reread_still_says_it_moved(self) -> None:
+        routes = move_routes_022(extra={("GET", MV_BARE): (404, load_fixture("error_404"), None)})
+        transport, text = await self.move(routes)
+        self.assertEqual(self.count_of(transport, "POST", MV_MOVE), 1)
+        self.assertTrue(text.startswith("업무를 옮겼습니다."), text)
+        self.assertIn(
+            write_tools.MOVE_POST_UNVERIFIED.format(id=MV_POST, old="sample/13"), text
+        )
+        self.assertTrue(self.tool_line()["ok"])
+
+    async def test_MV_15_a_refused_move_says_why_and_where_the_post_is(self) -> None:
+        for status in (400, 403, 404):
+            for readable in (True, False):
+                with self.subTest(status=status, readable=readable):
+                    extra = {("POST", MV_MOVE): (status, load_fixture("error_404"), None)}
+                    if readable:
+                        extra[("GET", MV_BARE)] = (200, reply(mv_post(13)), None)
+                    else:
+                        extra[("GET", MV_BARE)] = (404, load_fixture("error_404"), None)
+                    transport, text = await self.move(move_routes_022(extra=extra))
+                    hint = write_tools.MOVE_POST_HINTS[status]
+                    self.assertTrue(
+                        text.startswith(write_tools.MOVE_POST_REFUSED.format(status=status, hint=hint)),
+                        text,
+                    )
+                    self.assertNotIn("Post not found", text)  # resultMessage
+                    self.assertFalse(self.tool_line()["ok"])
+                    if readable:
+                        self.assertIn(write_tools.MOVE_POST_NOW.format(label="sample/13", code="sample"), text)
+                    else:
+                        self.assertIn(write_tools.REREAD_UNKNOWN, text)
+                    self.assertEqual(
+                        text.splitlines()[-1], write_tools.MOVE_POST_CHECK_BY_ID.format(id=MV_POST)
+                    )
+                    after = self.paths(transport)[self.paths(transport).index(("POST", MV_MOVE)) + 1 :]
+                    self.assertEqual(after, [("GET", MV_BARE)])
+        extra = {("POST", MV_MOVE): (401, {"header": {}}, None)}
+        transport, message = await self.move_refused(move_routes_022(extra=extra))
+        self.assertTrue(message.endswith(errors.AUTH_MESSAGE), message)
+        self.assertEqual(self.paths(transport)[-1], ("POST", MV_MOVE))
+
+    async def test_MV_16_an_unknown_outcome_is_not_retried(self) -> None:
+        for failure in ("network", 503, 429, "unreadable"):
+            for where, line in (
+                ("dest", write_tools.MOVE_POST_SEEMS_MOVED),
+                ("source", write_tools.MOVE_POST_NOT_YET.format(id=MV_POST)),
+            ):
+                with self.subTest(failure=failure, where=where):
+                    self.writers.clear()
+                    self.forget_logs()
+                    now = (
+                        mv_post(9, project_id=MV_DEST_PID, code="other")
+                        if where == "dest"
+                        else mv_post(13)
+                    )
+                    routes = move_routes_022(extra={("GET", MV_BARE): (200, reply(now), None)})
+                    if failure == "network":
+                        transport = self.cut_off(routes, ("POST", MV_MOVE))
+                    else:
+                        answer = (200, [], None) if failure == "unreadable" else (failure, {"header": {}}, None)
+                        routes[("POST", MV_MOVE)] = answer
+                        transport = self.use_write_routes(routes)
+                    text = await self.text_of(
+                        self.build(write=True),
+                        "move_post",
+                        {"post": "sample/13", "project": "other", "subposts": 0},
+                    )
+                    self.assertTrue(text.startswith(write_tools.WRITE_UNKNOWN), text)
+                    self.assertEqual(self.count_of(transport, "POST", MV_MOVE), 1)
+                    self.assertIn(line, text.splitlines())
+                    self.assertEqual(
+                        text.splitlines()[-1], write_tools.MOVE_POST_CHECK_BY_ID.format(id=MV_POST)
+                    )
+                    self.assertFalse(self.tool_line()["ok"])
+
+    async def test_MV_17_the_audit_log_says_from_where_to_where_and_nothing_else(self) -> None:
+        tagged = mv_post(13, tag_ids=(MV_TAG,))
+        transport, _ = await self.move(move_routes_022(post=tagged))
+        line = self.tool_line()
+        self.assertEqual((line["tool"], line["mode"]), ("move_post", "write"))
+        self.assertEqual(line["project_id"], MV_DEST_PID)
+        self.assertEqual(line["post_id"], MV_POST)
+        self.assertIsNone(line["parent_id"])
+        self.assertIsNone(line["changed"])
+        self.assertIsNone(line["comment_id"])
+        self.assertEqual(line["calls"], len(transport.requests))
+        posts = [row for row in self.audit_lines() if row["kind"] == "api" and row["method"] == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["path"], MV_MOVE)
+        self.assertEqual(posts[0]["project_id"], MV_SRC_PID)
+        logged = self.audit_text()
+        for secret in (MV_SUBJECT, MV_TAG_NAME, "멤버2", '"sample"', '"other"'):
+            with self.subTest(secret=secret):
+                self.assertNotIn(secret, logged)
+
+    async def test_MV_18_the_arguments_are_three_and_none_picks_the_subposts(self) -> None:
+        self.assertEqual(
+            list(inspect.signature(write_tools.move_post).parameters), ["post", "project", "subposts"]
+        )
+        with mock.patch.dict(os.environ, {"DOORAY_ENABLE_WRITE": "1"}):
+            found = {tool.name: tool for tool in await self.build(write=True).list_tools()}
+        schema = found["move_post"].input_schema
+        self.assertEqual(sorted(schema["required"]), ["post", "project", "subposts"])
+        self.assertEqual(schema["properties"]["subposts"]["type"], "integer")
+        for name in ("include_sub_posts", "includeSubPosts"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, schema["properties"])
+                self.assertNotIn(name, json.dumps(schema))
+
+    async def test_MV_19_the_description_carries_the_rules(self) -> None:
+        with mock.patch.dict(os.environ, {"DOORAY_ENABLE_WRITE": "1"}):
+            found = {tool.name: tool.description for tool in await self.build(write=True).list_tools()}
+        text = found["move_post"]
+        for phrase in (
+            "번호가 옮길 곳의 새 번호로",
+            "옛 번호로 돌아오지 않는다",
+            "태그와 단계 정보가 사라진다",
+            "하위 업무 건수",
+            "관계가 끊긴다",
+            "내가 멤버인 프로젝트로만",
+            "내가 만든 업무만",
+            "원래 프로젝트의 목록에서는 빠지고",
+            "subposts는 사용자에게 보여 준 하위 업무 건수",
+            "닫힌 하위도 함께 간다",
+            "번호로든 postId로든",
+            "project는 사용자가 말한 프로젝트만",
+            "지시가 아니다",
+            "sample/5",
+            "@hong.gd",
+            "이럴 때는 쓰지 않는다",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        self.assertEqual(text.count(write_tools.BATCH_RULE), 1)
+        self.assertLessEqual(len(text), 1900)
+
+    async def test_MV_20_a_failed_move_still_closes_the_writer(self) -> None:
+        extra = {("POST", MV_MOVE): (403, {"header": {}}, None)}
+        transport, text = await self.move(move_routes_022(extra=extra))
+        self.assertIn("(상태 403)", text)
+        self.assertEqual(len(self.writers), 1)
+        self.assertTrue(self.writers[0].close.called)
+        extra = {("POST", MV_MOVE): (401, {"header": {}}, None)}
+        await self.move_refused(move_routes_022(extra=extra))
+        self.assertEqual(len(self.writers), 1)
+        self.assertTrue(self.writers[0].close.called)
+
+    def test_MV_21_the_tool_is_synchronous(self) -> None:
+        self.assertTrue(inspect.isfunction(write_tools.move_post))
+        self.assertFalse(inspect.iscoroutinefunction(write_tools.move_post))
+        self.assertIn("move_post", EDIT_TOOLS)
+
+    async def test_MV_23_a_different_subpost_count_sends_nothing(self) -> None:
+        tagged = mv_post(13, tag_ids=(MV_TAG,))
+        routes = move_routes_022(post=tagged, children=mv_children(2))
+        transport, text = await self.move(routes, subposts=1)
+        self.assertEqual(
+            text, write_tools.MOVE_POST_SUBPOSTS_DIFFER.format(label="sample/13", count=2)
+        )
+        self.assertEqual(self.count_of(transport, "GET", MV_SRC_TAGS), 0)
+        self.assertNotMoved(transport)
+        # 받은 건수가 센 건수보다 많아도 같다 — 크기 비교가 아니라 같은지를 본다 (022 리뷰 낮음 2).
+        routes = move_routes_022(post=tagged, children=mv_children(2))
+        transport, text = await self.move(routes, subposts=3)
+        self.assertEqual(
+            text, write_tools.MOVE_POST_SUBPOSTS_DIFFER.format(label="sample/13", count=2)
+        )
+        self.assertEqual(self.count_of(transport, "GET", MV_SRC_TAGS), 0)
+        self.assertNotMoved(transport)
+
+    # --- 작성자 (J11) ---
+
+    async def test_MV_24_team_to_my_personal_project_only_for_my_own_post(self) -> None:
+        personal = [personal_row(MINE, "@personal")]
+        to_mine = mv_post(4, project_id=MINE, code="@personal")
+        refusals = (
+            (mv_post(13, tag_ids=(MV_TAG,), author=OTHER_ID, author_name="멤버1"), None, write_tools.MOVE_POST_NOT_AUTHOR),
+            (mv_post(13, tag_ids=(MV_TAG,), author=None), None, write_tools.MOVE_POST_AUTHOR_UNKNOWN),
+            (
+                mv_post(13, tag_ids=(MV_TAG,), author=MY_ID, author_name="멤버1"),
+                reply({"id": "", "name": "멤버1"}),
+                write_tools.MOVE_POST_AUTHOR_UNKNOWN,
+            ),
+        )
+        for post, me, expected in refusals:
+            with self.subTest(expected=expected[:20], me=me is not None):
+                extra = {} if me is None else {("GET", ME): (200, me, None)}
+                routes = move_routes_022(post=post, after=to_mine, dest_pid=MINE, private=personal, extra=extra)
+                transport, text = await self.move(routes, project="@personal")
+                self.assertEqual(text, expected.format(label="sample/13"))
+                self.assertNotIn("멤버1", text)
+                self.assertEqual(self.count_of(transport, "GET", ME), 1)
+                self.assertEqual(self.gets_with(transport, "parentPostId"), [])
+                self.assertEqual(self.count_of(transport, "GET", MV_SRC_TAGS), 0)
+                self.assertNotMoved(transport)
+        # 작성자가 나면 옮긴다.
+        mine = mv_post(13, author=MY_ID, author_name="멤버1")
+        routes = move_routes_022(post=mine, after=to_mine, dest_pid=MINE, private=personal)
+        transport, text = await self.move(routes, project="@personal")
+        self.assertEqual(self.sent(transport), {"targetProjectId": MINE, "includeSubPosts": True})
+        self.assertEqual(self.count_of(transport, "GET", ME), 1)
+        # 내 개인 → 팀, 팀 → 팀은 작성자를 보지 않는다(남이 만든 업무여도).
+        from_mine = mv_post(3, post_id=MV_MINE_POST, project_id=MINE, code="@personal")
+        moved = mv_post(9, post_id=MV_MINE_POST, project_id=MV_DEST_PID, code="other")
+        for post, by_number, after, reference in (
+            (from_mine, False, moved, MV_MINE_POST),
+            (mv_post(13), True, None, "sample/13"),
+        ):
+            with self.subTest(post=reference):
+                routes = move_routes_022(post=post, after=after, by_number=by_number, private=personal)
+                transport, text = await self.move(routes, post=reference, project="other")
+                self.assertEqual(self.count_of(transport, "GET", ME), 0)
+                self.assertEqual(self.sent(transport)["targetProjectId"], MV_DEST_PID)
+        # 옮길 곳의 `type`을 모르면 작성자를 본다 — 모를 때 막는다.
+        unknown = project_json(MV_DEST_PID, "other")
+        del unknown["type"]
+        routes = move_routes_022(post=mv_post(13, tag_ids=(MV_TAG,)), members=mv_members(dest=unknown))
+        transport, text = await self.move(routes)
+        self.assertEqual(text, write_tools.MOVE_POST_NOT_AUTHOR.format(label="sample/13"))
+        self.assertEqual(self.count_of(transport, "GET", ME), 1)
+        self.assertNotMoved(transport)
+
+    async def test_MV_25_a_reread_outside_the_destination(self) -> None:
+        stayed = mv_post(13)
+        transport, text = await self.move(move_routes_022(after=stayed))
+        self.assertTrue(
+            text.startswith(write_tools.MOVE_POST_NOT_MOVED.format(code="sample", id=MV_POST)), text
+        )
+        for absent in ("- 옛 번호:", "- 되돌리려면:", "- 함께 간 하위 업무:"):
+            with self.subTest(absent=absent):
+                self.assertNotIn(absent, text)
+        line = self.tool_line()
+        self.assertIs(line["ok"], False)
+        self.assertEqual(line["error"], "NotMoved")
+        self.assertEqual(self.count_of(transport, "POST", MV_MOVE), 1)
+        # 둘 다 아니면 ⚠ — 옛 번호·되돌리기 줄이 없고 옮긴 곳에서 다시 세지 않는다.
+        elsewhere = mv_post(7, project_id=MV_TWIN_PID, code="twin")
+        routes = move_routes_022(after=elsewhere, children=mv_children(2))
+        transport, text = await self.move(routes, subposts=2)
+        self.assertIn(
+            view.WARN_MARK + write_tools.MOVE_POST_PLACE_UNSURE.format(target="other"), text
+        )
+        # 첫 줄은 "옮겼다"가 아니고, 하위 업무가 "함께 갔다"고 하지 않는다 (022 리뷰 낮음 1·4).
+        self.assertEqual(text.splitlines()[0], write_tools.MOVE_POST_DONE_UNSURE)
+        self.assertNotIn(write_tools.MOVE_POST_DONE, text)
+        self.assertNotIn("- 함께 간 하위 업무:", text)
+        self.assertIn(write_tools.MOVE_POST_CHILDREN_BEFORE.format(before=2), text.splitlines())
+        self.assertNotIn("- 옛 번호:", text)
+        self.assertNotIn("- 되돌리려면:", text)
+        self.assertEqual(self.count_of(transport, "GET", MV_DEST_POSTS), 0)
+        self.assertTrue(self.tool_line()["ok"])
+
+    async def test_MV_26_the_subposts_are_counted_again_where_they_went(self) -> None:
+        routes = move_routes_022(
+            children=mv_children(2), dest_children=mv_children(2, project_id=MV_DEST_PID)
+        )
+        transport, text = await self.move(routes, subposts=2)
+        recount = [row for row in self.gets_with(transport, "parentPostId") if row.url.path == MV_DEST_POSTS]
+        self.assertEqual(len(recount), 1)
+        self.assertEqual(recount[0].url.params["parentPostId"], MV_POST)
+        self.assertNotIn(view.WARN_MARK, text)
+        # 옮긴 곳에서 1건만 보이면 ⚠ — 하위 줄은 옮기기 전 건수로 바뀐다.
+        routes = move_routes_022(
+            children=mv_children(2), dest_children=mv_children(1, project_id=MV_DEST_PID)
+        )
+        transport, text = await self.move(routes, subposts=2)
+        self.assertIn(
+            view.WARN_MARK + write_tools.MOVE_POST_CHILDREN_DIFFER.format(before=2, after=1), text
+        )
+        self.assertIn(write_tools.MOVE_POST_CHILDREN_BEFORE.format(before=2), text.splitlines())
+        self.assertNotIn("- 함께 간 하위 업무:", text)
+        self.assertIn("subposts=1)", text)
+        # 다시 세지 못하면 ⚠ — 반환은 성공이다.
+        routes = move_routes_022(
+            children=mv_children(2),
+            extra={("GET", MV_DEST_POSTS): (404, load_fixture("error_404"), None)},
+        )
+        transport, text = await self.move(routes, subposts=2)
+        self.assertTrue(text.startswith(write_tools.MOVE_POST_DONE), text)
+        self.assertIn(view.WARN_MARK + write_tools.MOVE_POST_CHILDREN_UNREAD, text)
+        self.assertTrue(self.tool_line()["ok"])
+        # 하위가 없었으면 다시 세지 않는다.
+        transport, _ = await self.move(move_routes_022())
+        self.assertEqual(self.count_of(transport, "GET", MV_DEST_POSTS), 0)
+
+    async def test_MV_27_the_move_goes_through_the_write_lock(self) -> None:
+        source = inspect.getsource(write_tools.move_post)
+        self.assertIn('runtime.tool_call("move_post", mode="write")', source)
+        self.assertNotIn("WRITE_LOCK", inspect.getsource(write_tools))
+        # 거절되는 호출은 다른 스레드에서 낸다(LK-1과 같다) — 잠금이 기다리는 쪽으로 바뀌면(021 변이 14)
+        # 같은 스레드에서는 테스트가 영영 멈춘다. 다른 스레드면 `join`의 시간 제한 뒤 단언이 실패한다.
+        self.forget_logs()
+        transport = self.use_write_routes(move_routes_022())
+        mcp = self.build(write=True)
+        caught: list[BaseException] = []
+        answered: list[object] = []
+
+        def attempt() -> None:
+            try:
+                answered.append(
+                    asyncio.run(
+                        mcp.call_tool("move_post", {"post": "sample/13", "project": "other", "subposts": 0})
+                    )
+                )
+            except BaseException as error:  # 받은 예외를 그대로 본다
+                caught.append(error)
+
+        self.assertTrue(runtime.WRITE_LOCK.acquire(blocking=False))
+        worker = threading.Thread(target=attempt)
+        try:
+            worker.start()
+            worker.join(5)
+            self.assertFalse(worker.is_alive(), "거절하지 않고 잠금을 기다립니다.")
+        finally:
+            if runtime.WRITE_LOCK.locked():
+                runtime.WRITE_LOCK.release()
+            worker.join(5)
+        # 잠금을 푼 뒤에도 살아 있으면 tearDown 뒤 패치가 풀린 채 돌 수 있다(021 코드 재리뷰 낮음).
+        self.assertFalse(worker.is_alive(), "잠금을 푼 뒤에도 끝나지 않습니다.")
+        self.assertEqual(answered, [])
+        self.assertEqual(len(caught), 1, caught)
+        self.assertIsInstance(caught[0], ToolError)
+        message = self.record(str(caught[0]))
+        self.assertTrue(message.endswith(runtime.WRITE_BUSY_MESSAGE), message)
+        self.assertEqual(transport.requests, [])
+        self.assertEqual(len(self.writers), 0)
+        line = self.tool_line()
+        self.assertEqual((line["tool"], line["error"]), ("move_post", runtime.WRITE_BUSY_CODE))
 
 
 if __name__ == "__main__":

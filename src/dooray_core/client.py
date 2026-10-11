@@ -84,7 +84,7 @@ _ID = r"[0-9A-Za-z_-]+"
 # 무언가를 **만드는** 두 행의 경로. 감사 로그가 만든 항목의 ID를 적을 때도 이것으로 가린다 (012 spec §5-6).
 _COMMENT_CREATE = re.compile(rf"/project/v1/projects/{_ID}/posts/{_ID}/logs")
 _POST_CREATE = re.compile(rf"/project/v1/projects/{_ID}/posts")
-# 쓰기가 허용된 전송 계층이 보낼 수 있는 (동사, 경로, 본문 키) 여덟 행. 이 표가 전부다 (012 spec §5-1).
+# 쓰기가 허용된 전송 계층이 보낼 수 있는 (동사, 경로, 본문 키) 아홉 행. 이 표가 전부다 (012 spec §5-1).
 # 정규식은 전부 **완전 일치**다 — 접두 일치면 생성 경로에 한 칸을 더한 경로가 통과한다.
 # 동사도 행에 있다 — 같은 경로라도 다른 동사는 다른 요청이다(업무 생성과 업무 수정).
 _WRITE_PATHS: tuple[tuple[str, re.Pattern[str], frozenset[str]], ...] = (
@@ -123,6 +123,12 @@ _WRITE_PATHS: tuple[tuple[str, re.Pattern[str], frozenset[str]], ...] = (
     ("PUT", re.compile(rf"/project/v1/projects/{_ID}/posts/{_ID}/to/{_ID}"), frozenset({"workflowId"})),
     # 완료 처리 — 본문이 없다 (api-notes 012 실측). 빈 키 집합 = 본문 None만 받는다
     ("POST", re.compile(rf"/project/v1/projects/{_ID}/posts/{_ID}/set-done"), frozenset()),
+    # 다른 프로젝트로 옮기기 (api-notes 022 실측). 하위 업무는 언제나 같이 간다
+    (
+        "POST",
+        re.compile(rf"/project/v1/projects/{_ID}/posts/{_ID}/move"),
+        frozenset({"targetProjectId", "includeSubPosts"}),
+    ),
 )
 
 

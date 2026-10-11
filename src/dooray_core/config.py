@@ -236,6 +236,15 @@ def write_enabled() -> bool:
     return os.environ.get("DOORAY_ENABLE_WRITE", "").strip() == "1"
 
 
+SKIP_WRITE_ASK_ENV = "DOORAY_SKIP_WRITE_ASK"
+SKIP_WRITE_ASK_VALUE = "1"
+
+
+def ask_every_write() -> bool:
+    """쓰기마다 허락 묻기 (021, ADR 019). 표시를 빼는 값은 `1` 하나다 — 게이트와 같은 규칙. 그 밖은 모두 묻는다."""
+    return os.environ.get(SKIP_WRITE_ASK_ENV, "").strip() != SKIP_WRITE_ASK_VALUE
+
+
 # --- 토큰 (§3-3) ------------------------------------------------------------
 
 

@@ -125,8 +125,8 @@ class SecurityListsTest(unittest.TestCase):
             if line.startswith("|") and "`" in line
         ]
         # 012 spec §10-2 #28 — 여덟 행. 요청 칸은 (동사, 경로)이고, 동사와 경로가 **함께** 맞는 행이 하나다.
-        # 필드 칸에 백틱이 없으면 빈 집합이다(`set-done` — 본문 없음).
-        self.assertEqual(len(rows), 8)
+        # 필드 칸에 백틱이 없으면 빈 집합이다(`set-done` — 본문 없음). 022 — 아홉 행(옮기기).
+        self.assertEqual(len(rows), 9)
         used: list[int] = []
         for row in rows:
             cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
@@ -206,6 +206,43 @@ class SecurityListsTest(unittest.TestCase):
         )
         self.assertIn("수정된 시각만 남고", row)
         self.assertNotIn("확인하지 못", row)
+
+
+class BatchApprovalDocsTest(unittest.TestCase):
+    """021 spec §7-1의 DC-1·DC-2 — 표시를 빼는 스위치와 묶음 승인을 문서가 실측대로 적는다."""
+
+    def test_DC_1_security_names_the_switch_and_the_batch(self) -> None:
+        text = read(SECURITY)
+        self.assertNotIn("표시를 끄는 설정·환경변수·인자는 없습니다", text)
+        for phrase in (
+            "DOORAY_SKIP_WRITE_ASK",
+            "개발용 등록에만",
+            "처음부터 창 없이 실행됩니다",
+            "사람이 끼는 단계가 없어지고",
+            "몇 건을 묶었는지 알지 못하고",
+            "앞 쓰기가 도는 동안 온 쓰기는 보내지 않고 거절합니다",
+            "자동으로 실행하는 모드에서는 쓰기 도구의 허락 창이 뜨지 않았습니다",
+            "묶음 한 번의 승인이 곧 최대 10건의 쓰기",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        self.assertNotIn("Code 탭에서는 창이 없으므로", text)
+
+    def test_DC_2_readme_tells_the_batch_in_plain_words(self) -> None:
+        text = read(README)
+        for phrase in (
+            "10건까지",
+            "Claude가 지키는 규칙이라 완전하지 않습니다",
+            "동시에 온 쓰기는 프로그램이 거절합니다",
+            "자동으로 실행하는 모드에서는 쓰기 도구의 허락 창이 뜨지 않았습니다",
+            '한 번의 "전부 해 주세요"가 곧 최대 10건의 쓰기',
+            '"항상 허용"을 누르지 마세요',
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        for phrase in ("DOORAY_SKIP_WRITE_ASK", "쓰기마다 허락", "Code 탭에서는 창이 뜨지 않으므로"):
+            with self.subTest(absent=phrase):
+                self.assertNotIn(phrase, text)
 
 
 class ToolListsTest(ServerCase):

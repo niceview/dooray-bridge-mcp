@@ -355,7 +355,7 @@ class GuideTextTest(unittest.TestCase):
 
         self.assertIsInstance(guides.TOPICS, tuple)
         self.assertEqual([name for name, _ in guides.TOPICS], ["reply", "new-post", "organize", "edit"])
-        self.assertIn("쓰기는 네 가지뿐이다", guides.INDEX)
+        self.assertIn("쓰기는 다섯 가지뿐이다", guides.INDEX)  # 022: 옮기기
 
     def test_P19_2_the_texts_call_no_api(self) -> None:
         # ② 코드 블록만이 아니라 전문을 본다. 두레이로 나가는 요청은 전부 MCP 도구가 보낸다.
@@ -397,11 +397,12 @@ class GuideTextTest(unittest.TestCase):
                 with self.subTest(text=name, needle=needle):
                     self.assertNotIn(needle, self.topic(name))
 
-    def test_P19_5_approval_is_given_twice(self) -> None:
+    def test_P19_5_the_conversation_approval_always_comes_first(self) -> None:
         # ⑤ 005 spec §3-3 (MU6) — 허락 창은 덤이 아니다. 창이 뜬다고 단정하지 않는다(ADR 009).
+        # 021 spec §7-2 — 표시는 등록에서 뺄 수 있다. 대화의 승인은 언제나다 (ADR 019).
         from mcp_server import guides
 
-        self.assertIn("승인은 두 번이다", guides.INDEX)
+        self.assertIn("이 승인은 언제나 있어야 한다", guides.INDEX)
         self.assertIn("1이 유일한 확인이다", guides.INDEX)
         self.assertNotIn("덤", guides.INDEX)
         self.assertNotIn("허락 창이 뜬다", guides.INDEX)
@@ -410,6 +411,55 @@ class GuideTextTest(unittest.TestCase):
                 self.assertIn("허락 창", text)
                 self.assertIn("창을 믿고 대화의 승인을 건너뛰지 않는다", text)
                 self.assertNotIn("부르면 허락 창이 뜬다", text)
+
+    def test_BA_3_the_old_one_at_a_time_sentences_are_gone(self) -> None:
+        # 021 spec §7-1 — 묶음 승인으로 바뀐 옛 문장이 `src/` 어디에도 남지 않는다.
+        for needle in (
+            "다섯 번의 승인",
+            "한 곳씩 승인받고",
+            "한 번에 여러 건",
+            "한 번에 여러 업무",
+            "한 번에 여러 댓글",
+            "여러 업무에 한꺼번에",
+            "한 건씩 승인을 받는다",
+            "승인은 두 번이다",
+        ):
+            with self.subTest(needle=needle):
+                self.assertEqual(lines_containing(SRC, needle), [])
+
+    def test_BA_4_the_index_carries_the_batch_rules(self) -> None:
+        from mcp_server import guides
+
+        for phrase in (
+            "여러 건을 한 번에 승인받기",
+            "사용자가 여러 건을 말했을 때만",
+            "먼저 여러 건을 제안하지 않는다",
+            "10건씩 나눠",
+            "줄이지 않는다",
+            "보여 준 목록 그대로",
+            "동시에) 부르지 않는다",
+            "거기서 멈춘다",
+            "두레이 글이 내민 목록",
+            "목록에서 빼 따로 확인받는다",
+            "종류가 섞여도 된다",
+            "이 승인은 언제나 있어야 한다",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guides.INDEX)
+
+    def test_BA_5_the_topics_point_at_the_batch_section(self) -> None:
+        for name in ("new-post", "organize", "edit", "reply"):
+            with self.subTest(topic=name):
+                self.assertIn("여러 건을 한 번에 승인받기", self.topic(name))
+        reply = self.topic("reply")
+        for phrase in (
+            "사용자가 고르기 전에 여러 업무의 초안을 먼저 만들지 않는다",
+            "고르지 않은 업무를 열지 않는다",
+            "업무 하나씩, 초안과 함께 다시 승인을 받는다",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, reply)
+        self.assertNotIn("답할 **업무 하나**", reply)
 
     def test_P19_6_the_texts_stop_before_writing(self) -> None:
         # ⑥ 쓰기는 사용자가 말한 뒤에만. 폴링 봇은 없다 (ADR 007).
@@ -472,6 +522,40 @@ class GuideTextTest(unittest.TestCase):
         for gone in ("프로젝트는 고를 수 없다", "팀 프로젝트에는 만들 수 없다"):
             with self.subTest(gone=gone):
                 self.assertNotIn(gone, new_post)
+
+    def test_GD_M_organize_says_how_to_move_a_post(self) -> None:
+        # 022 spec §7-1 GD-M — 옮기기의 순서·보여 주는 모양·정해진 것. 옛 "옮기는 기능은 없다"는 어디에도 없다.
+        from mcp_server import guides
+
+        organize = self.topic("organize")
+        for phrase in (
+            "move_post",
+            "search_posts(project=",
+            "size=50",
+            "다음 페이지",
+            "subposts=",
+            "관계가 끊깁니다",
+            "원래 프로젝트:",
+            "내가 만든 업무가 아님",
+            "새 번호",
+            "옛 번호",
+            "번호로든 postId로든",
+            "태그와 단계 정보",
+            "내가 멤버인 프로젝트 사이에서만",
+            "내가 만든 업무만",
+            "짐작해 고르지 않는다",
+            "whoami",
+            '원래 프로젝트에 있었습니다"도 실패다',
+            "닫힌 하위도 함께 간다",
+            "허락 창",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, organize)
+        source = (SERVER / "guides.py").read_text(encoding="utf-8")
+        self.assertNotIn("프로젝트를 옮기는 기능은 없다", source)
+        for phrase in ("·옮기기)", "번호로든 postId로든", "move_post는 하위 업무를 함께 옮긴다"):
+            with self.subTest(index=phrase):
+                self.assertIn(phrase, guides.INDEX)
 
 
 class McpServerTest(unittest.TestCase):
@@ -628,13 +712,13 @@ class McpServerTest(unittest.TestCase):
         from dooray_core import client
 
         writer_source = (CORE / "writer.py").read_text(encoding="utf-8")
-        self.assertEqual(writer_source.count("self._t.request("), 8)
+        self.assertEqual(writer_source.count("self._t.request("), 9)  # 022: 옮기기
         posts = lines_containing(SRC, '"POST"')
         puts = lines_containing(SRC, '"PUT"')
-        self.assertEqual(len([hit for hit in posts if WRITER_FILE in hit]), 5, posts)
+        self.assertEqual(len([hit for hit in posts if WRITER_FILE in hit]), 6, posts)
         self.assertEqual(len([hit for hit in puts if WRITER_FILE in hit]), 3, puts)
         verbs = Counter(row[0] for row in client._WRITE_PATHS)
-        self.assertEqual(verbs, Counter({"POST": 5, "PUT": 3}))
+        self.assertEqual(verbs, Counter({"POST": 6, "PUT": 3}))
         elsewhere = [
             hit
             for hit in posts + puts
@@ -642,11 +726,12 @@ class McpServerTest(unittest.TestCase):
         ]
         self.assertEqual(elsewhere, [], f"쓰기 동사가 다른 파일에 생겼습니다: {elsewhere}")
 
-    def test_P21_the_allowed_write_table_holds_eight_rows_and_one_reader(self) -> None:
+    def test_P21_the_allowed_write_table_holds_nine_rows_and_one_reader(self) -> None:
         # ADR 008 결정 6, 012 spec §10-2 #10 — "무엇이 바뀔 길이 있는가"의 답이 코드 검색 하나다.
+        # 022가 옮기기를 더해 아홉이다.
         from dooray_core import client
 
-        self.assertEqual(len(client._WRITE_PATHS), 8)
+        self.assertEqual(len(client._WRITE_PATHS), 9)
         for row in client._WRITE_PATHS:
             with self.subTest(row=repr(row)[:120]):
                 self.assertEqual(len(row), 3)
@@ -681,12 +766,12 @@ class McpServerTest(unittest.TestCase):
             for hit in lines_containing(SRC, "/project/v1") + lines_containing(SRC, "/common/v1")
         ]
         self.assertTrue(paths)
-        for needle in ("/move", "incoming-hooks", "/files"):
+        for needle in ("incoming-hooks", "/files"):
             hits = [hit for hit in paths if needle in hit]
             with self.subTest(needle=needle):
                 self.assertEqual(hits, [], f"열지 않은 쓰기 경로가 생겼습니다: {hits}")
-        # 012가 연 셋은 전송 표(client.py)와 그것을 부르는 Writer(writer.py)에만 있다.
-        for needle in ("set-done", "set-workflow", "/to/"):
+        # 012가 연 셋과 022가 연 옮기기는 전송 표(client.py)와 그것을 부르는 Writer(writer.py)에만 있다.
+        for needle in ("set-done", "set-workflow", "/to/", "/move"):
             hits = [
                 hit
                 for hit in paths
@@ -696,6 +781,20 @@ class McpServerTest(unittest.TestCase):
             ]
             with self.subTest(needle=needle):
                 self.assertEqual(hits, [], f"열린 쓰기 경로가 다른 파일에 생겼습니다: {hits}")
+
+    def test_RR_1_the_move_body_keys_live_in_the_table_and_the_writer(self) -> None:
+        # 022 spec §7-1 RR-1 — 전송 표는 키만 본다. 값(`True`)과 "둘 다 보냄"은 Writer의 본문 한 곳이 지킨다.
+        for needle in ("targetProjectId", "includeSubPosts"):
+            hits = lines_containing(SRC, needle)
+            with self.subTest(needle=needle):
+                self.assertTrue(hits)
+                for hit in hits:
+                    self.assertTrue(
+                        "dooray_core/client.py" in hit or WRITER_FILE in hit, hits
+                    )
+        writer_lines = (CORE / "writer.py").read_text(encoding="utf-8").splitlines()
+        fixed = [line for line in writer_lines if '"includeSubPosts": True' in line]
+        self.assertEqual(len(fixed), 1, fixed)
 
     def test_P23_the_mention_link_is_built_in_one_place(self) -> None:
         # 007 spec §8-3 — `dooray://`와 f-string 여는 따옴표가 한 줄에 같이 있는 곳은 `mention.py` 하나다.
@@ -716,17 +815,20 @@ class McpServerTest(unittest.TestCase):
                 self.assertEqual(lines_containing(SRC, needle), [])
 
     def test_P27_the_ask_every_call_mark_sits_where_it_should(self) -> None:
-        # 005 spec §3-5, O1 (B). 표시는 상수 하나이고, 쓰기 셋과 `set_reply_style`에만 걸린다.
+        # 005 spec §3-5, O1 (B). 표시는 상수 하나이고, 쓰기 도구 전부와 `set_reply_style`에만 걸린다.
         # 글자가 아니라 `ast`로 `add_tool` 호출의 키워드를 본다 (009 log — 글자 검사가 놓쳤다).
+        # 021 spec §7-2의 P27′ — 표시는 `build_server`의 조건식 하나에서 나온 `ask_marks`로만 흐른다.
         hits = lines_containing(SRC, "requiresUserInteraction")
         self.assertEqual(len(hits), 1, hits)
         self.assertIn("mcp_server/runtime.py", hits[0])
 
+        def tree_of(name: str) -> ast.Module:
+            return ast.parse((SERVER / name).read_text(encoding="utf-8"))
+
         def add_tool_calls(name: str) -> list[ast.Call]:
-            tree = ast.parse((SERVER / name).read_text(encoding="utf-8"))
             return [
                 node
-                for node in ast.walk(tree)
+                for node in ast.walk(tree_of(name))
                 if isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "add_tool"
@@ -736,26 +838,210 @@ class McpServerTest(unittest.TestCase):
             found = [item.value for item in call.keywords if item.arg == name]
             return found[0] if found else None
 
-        def is_the_mark(value: ast.expr | None) -> bool:
-            return (
-                isinstance(value, ast.Attribute)
-                and value.attr == "ASK_EVERY_CALL"
-                and isinstance(value.value, ast.Name)
-                and value.value.id == "runtime"
-            )
+        def is_marks(value: ast.expr | None) -> bool:
+            return isinstance(value, ast.Name) and value.id == "ask_marks"
 
+        def function(tree: ast.AST, name: str) -> ast.FunctionDef:
+            found = [
+                node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == name
+            ]
+            self.assertEqual(len(found), 1, name)
+            return found[0]
+
+        # ② `runtime.ASK_EVERY_CALL`을 가리키는 자리는 `src/`에서 `build_server`의 조건식 하나다.
+        references: list[tuple[str, ast.Attribute]] = []
+        for path in source_files(SRC):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Attribute) and node.attr == "ASK_EVERY_CALL":
+                    references.append((path.name, node))
+        self.assertEqual([name for name, _ in references], ["server.py"])
+        build = function(tree_of("server.py"), "build_server")
+        chosen = [
+            node
+            for node in ast.walk(build)
+            if isinstance(node, ast.Assign)
+            and [ast.dump(target) for target in node.targets] == [ast.dump(ast.Name("ask_marks", ast.Store()))]
+        ]
+        self.assertEqual(len(chosen), 1)
+        value = chosen[0].value
+        self.assertIsInstance(value, ast.IfExp)
+        self.assertIsInstance(value.body, ast.Attribute)
+        self.assertEqual(value.body.attr, "ASK_EVERY_CALL")
+        self.assertEqual(value.body.lineno, references[0][1].lineno)
+        self.assertIsInstance(value.body.value, ast.Name)
+        self.assertEqual(value.body.value.id, "runtime")
+        self.assertIsInstance(value.orelse, ast.Constant)
+        self.assertIsNone(value.orelse.value)
+
+        # ③ 쓰기 `add_tool` 전부가 `meta=ask_marks`이고, 그 수가 쓰기 `tool_call` 수와 같다(고정 수 없음 — 022).
         written = add_tool_calls("write_tools.py")
-        self.assertEqual(len(written), 9)  # 만들기 넷 + 고치기 다섯 (012 spec §10-2 #12, 020)
+        write_calls = [
+            node
+            for node in ast.walk(tree_of("write_tools.py"))
+            if isinstance(node, ast.Call)
+            and called_name(node) == "tool_call"
+            and any(
+                item.arg == "mode" and isinstance(item.value, ast.Constant) and item.value.value == "write"
+                for item in node.keywords
+            )
+        ]
+        self.assertGreater(len(written), 0)
+        self.assertEqual(len(written), len(write_calls))
         for call in written:
             with self.subTest(line=call.lineno):
-                self.assertTrue(is_the_mark(keyword(call, "meta")))
+                self.assertTrue(is_marks(keyword(call, "meta")))
 
+        # ④ 읽기 쪽에서 표시를 받는 것은 `set_reply_style` 하나다.
         marked = [call for call in add_tool_calls("tools.py") if keyword(call, "meta") is not None]
         self.assertEqual(len(marked), 1, [call.lineno for call in marked])
-        self.assertTrue(is_the_mark(keyword(marked[0], "meta")))
+        self.assertTrue(is_marks(keyword(marked[0], "meta")))
         tool_name = keyword(marked[0], "name")
         self.assertIsInstance(tool_name, ast.Constant)
         self.assertEqual(tool_name.value, "set_reply_style")
+
+        # ⑤ 등록 함수의 `ask_marks`는 키워드 전용이고 기본값이 없다.
+        for module, name in (("tools.py", "register_read_tools"), ("write_tools.py", "register_write_tools")):
+            with self.subTest(function=name):
+                arguments = function(tree_of(module), name).args
+                names = [item.arg for item in arguments.kwonlyargs]
+                self.assertIn("ask_marks", names)
+                self.assertIsNone(arguments.kw_defaults[names.index("ask_marks")])
+                self.assertNotIn("ask_marks", [item.arg for item in arguments.args])
+
+        # ⑥ `build_server`의 세 호출이 키워드로 넘긴다.
+        calls = {
+            called_name(node): node
+            for node in ast.walk(build)
+            if isinstance(node, ast.Call)
+            and called_name(node) in ("build_instructions", "register_read_tools", "register_write_tools")
+        }
+        self.assertEqual(set(calls), {"build_instructions", "register_read_tools", "register_write_tools"})
+        for name in ("register_read_tools", "register_write_tools"):
+            with self.subTest(call=name):
+                self.assertTrue(is_marks(keyword(calls[name], "ask_marks")))
+        passed = keyword(calls["build_instructions"], "ask_every_call")
+        self.assertIsInstance(passed, ast.Name)
+        self.assertEqual(passed.id, "ask")
+
+    def test_SW8_the_switch_is_read_once_from_one_environment_variable(self) -> None:
+        # 021 spec §7-1의 SW-8 — 판정은 `build_server` 한 곳, 읽는 것은 환경변수 하나.
+        self.assertEqual(call_sites(SRC, "ask_every_write"), ["mcp_server/server.py:build_server"])
+        hits = lines_containing(SRC, "DOORAY_SKIP_WRITE_ASK")
+        self.assertEqual(len(hits), 1, hits)
+        self.assertIn("dooray_core/config.py", hits[0])
+        for name in ("tools.py", "write_tools.py", "guides.py", "runtime.py", "view.py"):
+            text = (SERVER / name).read_text(encoding="utf-8")
+            for needle in ("ask_every_write", "SKIP_WRITE_ASK"):
+                with self.subTest(file=name, needle=needle):
+                    self.assertNotIn(needle, text)
+        tree = ast.parse((CORE / "config.py").read_text(encoding="utf-8"))
+        found = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "ask_every_write"
+        ]
+        self.assertEqual(len(found), 1)
+        body = found[0]
+        roots = [node for node in ast.walk(body) if isinstance(node, ast.Name) and node.id == "os"]
+        self.assertEqual(len(roots), 1)
+        reads = [
+            node
+            for node in ast.walk(body)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "environ"
+            and isinstance(node.func.value.value, ast.Name)
+            and node.func.value.value.id == "os"
+        ]
+        self.assertEqual(len(reads), 1)
+        self.assertIsInstance(reads[0].args[0], ast.Name)
+        self.assertEqual(reads[0].args[0].id, "SKIP_WRITE_ASK_ENV")
+        for node in ast.walk(body):
+            label = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else ""
+            with self.subTest(name=label):
+                self.assertNotIn("settings", label)
+
+    def test_LK3_the_write_lock_is_taken_in_one_place_without_waiting(self) -> None:
+        # 021 spec §7-1의 LK-3 — 쓰기 도구는 모두 `tool_call(mode="write")`를 한 번 지나고, 잠금은 그 안에서만.
+        def tree_of(path: Path) -> ast.Module:
+            return ast.parse(path.read_text(encoding="utf-8"))
+
+        def mode_of(call: ast.Call) -> object:
+            found = [item.value for item in call.keywords if item.arg == "mode"]
+            if not found:
+                return "read"
+            return found[0].value if isinstance(found[0], ast.Constant) else found[0]
+
+        written = tree_of(SERVER / "write_tools.py")
+        tool_calls = [
+            node for node in ast.walk(written) if isinstance(node, ast.Call) and called_name(node) == "tool_call"
+        ]
+        added = [
+            node
+            for node in ast.walk(written)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_tool"
+        ]
+        self.assertGreater(len(added), 0)
+        self.assertEqual(len(tool_calls), len(added))
+        for call in tool_calls:
+            with self.subTest(line=call.lineno):
+                self.assertEqual(mode_of(call), "write")
+        # 중첩 없음 — 한 함수 안에 `tool_call`이 둘 이상 없다.
+        for function in ast.walk(written):
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = [
+                    node
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Call) and called_name(node) == "tool_call"
+                ]
+                with self.subTest(function=function.name):
+                    self.assertLessEqual(len(inner), 1)
+        # 쓰기 도구가 쓰기 도구를 부르지 않는다 (L-e).
+        registered = {call.args[0].id for call in added if call.args and isinstance(call.args[0], ast.Name)}
+        self.assertEqual(len(registered), len(added))
+        for node in ast.walk(written):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                with self.subTest(called=node.func.id, line=node.lineno):
+                    self.assertNotIn(node.func.id, registered)
+        # 읽기 쪽 `tool_call`에는 `mode="write"`가 없다.
+        for node in ast.walk(tree_of(SERVER / "tools.py")):
+            if isinstance(node, ast.Call) and called_name(node) == "tool_call":
+                with self.subTest(line=node.lineno):
+                    self.assertNotEqual(mode_of(node), "write")
+        # `WRITE_LOCK`은 `runtime.py`에만 있고, 쓰는 자리는 `tool_call` 안의 기다리지 않는 잡기와 풀기다.
+        hits = lines_containing(SRC, "WRITE_LOCK")
+        self.assertTrue(hits)
+        for hit in hits:
+            with self.subTest(hit=hit):
+                self.assertIn("mcp_server/runtime.py", hit)
+        runtime_tree = tree_of(SERVER / "runtime.py")
+        used: list[tuple[str, ast.AST]] = []
+        for function in ast.walk(runtime_tree):
+            if isinstance(function, ast.FunctionDef):
+                for node in ast.walk(function):
+                    if isinstance(node, ast.Name) and node.id == "WRITE_LOCK":
+                        used.append((function.name, node))
+        loads = [node for node in ast.walk(runtime_tree) if isinstance(node, ast.Name) and node.id == "WRITE_LOCK" and isinstance(node.ctx, ast.Load)]
+        self.assertEqual(len(loads), len(used))
+        self.assertEqual({name for name, _ in used}, {"tool_call"})
+        lock_calls = [
+            node
+            for node in ast.walk(runtime_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "WRITE_LOCK"
+        ]
+        self.assertEqual(sorted(node.func.attr for node in lock_calls), ["acquire", "release"])
+        self.assertEqual(len(lock_calls), len(loads))  # `with WRITE_LOCK`처럼 기다리는 다른 쓰임이 없다
+        acquire = [node for node in lock_calls if node.func.attr == "acquire"][0]
+        self.assertEqual(acquire.args, [])
+        self.assertEqual(
+            [(item.arg, getattr(item.value, "value", None)) for item in acquire.keywords],
+            [("blocking", False)],
+        )
 
     def test_P28_mention_links_are_made_in_one_helper(self) -> None:
         # 012 spec 개정 7의 R7-3 — `link_mentions` 호출은 `src/`에 하나이고, 댓글 등록과 고치기가 같이 쓰는 도우미 안이다.
@@ -857,8 +1143,9 @@ class McpServerTest(unittest.TestCase):
         # 개정 1의 길(`reader.me()`)이 돌아오면 드러난다.
         self.assertEqual(call_sites(CORE, "me"), [])
 
-    def test_P29_the_five_edit_tools_carry_the_destructive_annotation(self) -> None:
+    def test_P29_the_overwriting_tools_carry_the_destructive_annotation(self) -> None:
         # 012 spec §2-2의 6 — 있던 것을 덮어쓰는 다섯만 `EDIT`(destructive)다. 만들기 넷은 `WRITE` 그대로다.
+        # 022 spec J4 — 옮기기도 `EDIT`다(번호가 바뀌고 원래 목록에서 빠진다). 만들기 넷 + 고치기 다섯 + 옮기기 하나.
         tree = ast.parse((SERVER / "write_tools.py").read_text(encoding="utf-8"))
         calls = [
             node
@@ -867,7 +1154,7 @@ class McpServerTest(unittest.TestCase):
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "add_tool"
         ]
-        self.assertEqual(len(calls), 9)
+        self.assertEqual(len(calls), 10)
 
         def keyword(call: ast.Call, name: str) -> ast.expr | None:
             found = [item.value for item in call.keywords if item.arg == name]
@@ -882,7 +1169,7 @@ class McpServerTest(unittest.TestCase):
             marked[tool_name.value] = annotation.id
         self.assertEqual(
             {name for name, value in marked.items() if value == "EDIT"},
-            {"edit_comment", "edit_post", "set_post_people", "set_post_fields", "set_post_status"},
+            {"edit_comment", "edit_post", "set_post_people", "set_post_fields", "set_post_status", "move_post"},
         )
         self.assertEqual(
             {name for name, value in marked.items() if value != "EDIT"},

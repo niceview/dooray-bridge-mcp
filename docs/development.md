@@ -61,6 +61,9 @@ claude mcp add -s user dooray-bridge -e DOORAY_WEB_BASE=https://회사이름.doo
 - 명령은 절대 경로다. 서버는 클라이언트가 아무 폴더에서나 띄운다.
 - 토큰은 `-e`로 주지 않는다. 키체인(3절)에서 읽는다.
 - 읽기 전용으로 쓰려면 `-e DOORAY_ENABLE_WRITE=1`을 뺀다. 쓰기 도구가 등록되지 않는다.
+- 허락 표시를 빼려면 `-e DOORAY_SKIP_WRITE_ASK=1`을 더한다(021, ADR 019). 값은 `1` 하나다.
+- **셸에서 `export`하지 않는다 — `-e`로만 준다.** 그 셸에서 띄운 클라이언트·헤드리스 실행이 환경을 물려받아 서버로 넘길 수 있다.
+- **헤드리스 시험은 이 사용자 등록을 쓰지 않는다.** 도우미가 서버 정의(이름 `dooray-bridge`, env에 `DOORAY_SKIP_WRITE_ASK`를 빈 값으로 명시)를 `--resume`을 포함한 모든 실행에 `--strict-mcp-config --mcp-config`로 넘긴다(CLAUDE.md "환경 특성"의 헤드리스 문단). 표시를 뺀 서버로 `dontAsk`를 돌리면 허용 목록의 쓰기 도구가 실제로 나간다.
 - 개발 중 실제 호출을 검증할 때는 실제 사용 폴더와 섞지 않게 `-e DOORAY_BRIDGE_HOME=<저장소 절대 경로>/.dev-home`을 더한다(절대 경로여야 한다).
 
 ## 5. 코드를 고친 뒤
@@ -75,7 +78,7 @@ claude mcp add -s user dooray-bridge -e DOORAY_WEB_BASE=https://회사이름.doo
 ## 6. 등록 시험
 
 - **헤드리스 시험은 읽기와 "쓰기 전에 멈춤"까지다.** 방법의 정본은 `CLAUDE.md` "환경 특성"의 헤드리스 문단이다.
-- **쓰기 도구는 헤드리스(`dontAsk`)에서 거절된다.** 쓰기 도구 아홉과 `set_reply_style`에 "매번 허락" 표시가 붙어 있기 때문이다(ADR 009). 허용 목록에 넣어도 거절되고 서버에 닿지 않는다(005 M8 실측).
+- **쓰기 도구는 헤드리스(`dontAsk`)에서 거절된다 — 표시가 붙은 서버에서만.** 쓰기 도구 열과 `set_reply_style`에 "매번 허락" 표시가 붙어 있기 때문이다(ADR 009) — 허용 목록에 넣어도 거절되고 서버에 닿지 않는다(005 M8 실측). `DOORAY_SKIP_WRITE_ASK`로 뺀 서버에서는 허용 목록이 그대로 통한다(ADR 019). 그래서 헤드리스는 사용자 등록을 쓰지 않고 스위치 없는 서버 정의를 `--strict-mcp-config --mcp-config`로 넘긴다.
 - **쓰기 호출 시험은 사람이 허락 창을 누른다.** 실제 쓰기는 지정된 시험 업무에만 한다.
 - **표시가 살아 있는지는 쓰기 없는 탐침으로 본다**: `set_parent_post`에 옮길 업무와 상위 업무를 **같은 업무**로 준다. 허락하면 서버가 대상을 읽은 뒤 "옮길 업무와 상위 업무가 같습니다."로 돌아오고 쓰기 요청은 0회다.
   확인: 그날 감사 로그에 `set_parent_post` 도구 줄이 있고, `"method": "POST"`인 줄이 없다. 거절했다면 도구 줄도 없다.
@@ -138,7 +141,7 @@ DOORAY_ENABLE_WRITE = "1"
 - **토큰은 적지 않는다.** 서버가 키체인(3절)에서 읽는다. 셸의 환경변수를 넘기는 `env_vars`도 필요 없다.
 - Codex는 "매번 허락" 표시(`anthropic/requiresUserInteraction`)를 모른다. 도구 승인 설정이 그 자리다.
   - `default_tools_approval_mode`·`tools.<도구>.approval_mode`의 값은 `auto`·`prompt`·`writes`·`approve`다.
-  - 문서가 뜻을 풀어 적은 것은 `writes` 하나다: 읽기 전용 표시가 없는 도구에 묻는다. 우리 쓰기 도구 아홉과 `set_reply_style`에는 읽기 전용 표시가 없고, 읽기 아홉(`guide` 포함)에는 있다.
+  - 문서가 뜻을 풀어 적은 것은 `writes` 하나다: 읽기 전용 표시가 없는 도구에 묻는다. 우리 쓰기 도구 열과 `set_reply_style`에는 읽기 전용 표시가 없고, 읽기 아홉(`guide` 포함)에는 있다.
   - `writes`가 **매번** 묻는지, `prompt`·`approve`가 무슨 뜻인지는 문서에서 확인하지 못했다.
 - 읽기 전용으로 쓰려면 `DOORAY_ENABLE_WRITE` 줄을 뺀다.
 

@@ -1,12 +1,12 @@
-"""두레이로 나가는 쓰기 여덟 (010 spec §4, 012 spec §5-4).
+"""두레이로 나가는 쓰기 아홉 (010 spec §4, 012 spec §5-4).
 
 이 모듈을 import하는 곳은 `mcp_server`의 쓰기 도구 등록부 **하나뿐이다** (제약 4, ADR 007).
 읽기 경로는 이 파일을 import하지 않고, 코드 검색 한 번으로 그것이 증명된다 (§7-2).
 의존 방향은 한쪽이다 — 이 파일이 `client`를 쓰고, `client`는 이 파일을 모른다.
 
-쓰기는 **여덟 요청뿐이다**: 업무 댓글 등록, 업무 만들기(내 개인 프로젝트나 지정한 프로젝트 — ADR 008·018), 상위 업무 지정·해제 (ADR 008),
-업무 수정, 댓글 수정, 업무 전체의 상태, 담당자 한 사람의 상태, 완료 처리 (ADR 012).
-댓글·업무 삭제, `move`, 파일, 멤버·태그·마일스톤·프로젝트 목록 자체의 변경,
+쓰기는 **아홉 요청뿐이다**: 업무 댓글 등록, 업무 만들기(내 개인 프로젝트나 지정한 프로젝트 — ADR 008·018), 상위 업무 지정·해제 (ADR 008),
+업무 수정, 댓글 수정, 업무 전체의 상태, 담당자 한 사람의 상태, 완료 처리 (ADR 012), 업무를 다른 프로젝트로 옮기기 (ADR 020).
+댓글·업무 삭제, 파일, 멤버·태그·마일스톤·프로젝트 목록 자체의 변경,
 훅 등록은 구현하지 않는다 (제약 3).
 """
 
@@ -278,6 +278,24 @@ class DoorayWriter:
             post_id=str(answered_post) if answered_post else str(post_id),
             project_id=str(answered_project) if answered_project else str(project_id),
             parent_post_id=target,
+        )
+
+    def move_post(self, *, project_id: str, post_id: str, target_project_id: str) -> None:
+        """업무 하나를 다른 프로젝트로 옮긴다 (api-notes 022 실측). 1회 호출.
+
+        하위 업무는 **언제나** 같이 간다 — `includeSubPosts`를 인자로 열지 않는다(022 intent).
+        `targetProjectId`는 언제나 보낸다 — 빼면 같은 프로젝트로 간주된다[문서].
+        응답을 읽지 않는다 — `result.project.id`가 어느 프로젝트와도 같지 않았다(실측). 옮긴 곳은 호출부가 다시 읽는다.
+        """
+        target = path_id(target_project_id)
+        if target == path_id(project_id):
+            raise ValueError("옮길 곳이 원래 프로젝트와 같습니다.")  # 도구가 먼저 뺀다 — 둘째 관문
+        self._t.request(
+            "POST",
+            f"/project/v1/projects/{path_id(project_id)}/posts/{path_id(post_id)}/move",
+            body={"targetProjectId": target, "includeSubPosts": True},
+            project_id=str(project_id),
+            post_id=str(post_id),
         )
 
     # --- 고치기 (012 spec §5-4) -------------------------------------------------

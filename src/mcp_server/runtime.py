@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -72,8 +73,14 @@ WRITE_TOOLS_REGISTERED = False
 
 # 부를 때마다 사람이 허락해야 실행된다 — 클라이언트의 모드·허용 규칙과 무관하게 (ADR 009).
 # 값은 JSON 불리언 true여야 한다. 다른 값은 클라이언트가 무시한다.
-# 두레이 쓰기 도구 아홉과 `set_reply_style`의 등록에 건다. 끄는 스위치를 두지 않는다 (005 spec §3-4).
+# 두레이 쓰기 도구 열과 `set_reply_style`의 등록에 건다. 끄는 길은 config의 스위치 하나다 — 서버가 뜰 때 한 번, 개발용 등록의 환경변수로만 (021, ADR 019).
 ASK_EVERY_CALL = {"anthropic/requiresUserInteraction": True}
+
+# 두레이 쓰기 도구는 프로세스에 한 번에 하나다. 기다리지 않는다 (021, ADR 019).
+# 잡는 자리는 `tool_call(mode="write")` 하나다. 모듈 전역인 것이 곧 "프로세스당 하나"라는 뜻이다.
+WRITE_LOCK = threading.Lock()
+WRITE_BUSY_CODE = "WriteBusy"  # 감사 로그의 error — 리터럴 상수
+WRITE_BUSY_MESSAGE = "앞 쓰기가 끝나기 전에 온 호출이라 보내지 않았습니다. 여러 건을 하던 중이면 여기서 멈추고, 된 것과 안 된 것을 사용자에게 알린 뒤 다시 승인받으세요."
 
 
 # --- 인자 검증 문장 (§3-5) ---------------------------------------------------
@@ -256,33 +263,46 @@ def tool_call(tool: str, *, mode: str = "read") -> Iterator[ToolCall]:
 
     `DoorayError`는 `ToolError(exc.message)`가 되고(§3-5), 그 밖의 예외는 그대로 다시 던진다 —
     SDK가 메시지를 가린다(mcp-notes §5). `tool`과 `error`에는 리터럴 상수와 예외 클래스 이름만 들어간다.
+    `mode="write"`는 `WRITE_LOCK`을 기다리지 않고 잡는다 — 못 잡으면 본문을 돌리지 않고 거절한다.
+    잡은 호출은 감사 로그까지 잠금 안에서 돌고, `ToolError`는 풀린 뒤 던진다 (021 spec §2-3).
     """
     call = ToolCall(tool)
-    started = time.monotonic()
+    locked = False
+    if mode == "write":
+        if not WRITE_LOCK.acquire(blocking=False):
+            # 아무것도 보내지 않았다. 잠금을 잡지 않았으니 풀지 않는다. `except` 밖이라 사슬이 없다.
+            _audit(call, mode, ok=False, error=WRITE_BUSY_CODE, started=time.monotonic())
+            raise ToolError(WRITE_BUSY_MESSAGE)
+        locked = True
     message: str | None = None
     try:
-        yield call
-    except DoorayError as failure:
-        _audit(call, mode, ok=False, error=type(failure).__name__, started=started)
-        message = failure.message
-        # 사슬을 여기서 끊는다. `@contextmanager`는 `__exit__`가 예외를 처리하는 **도중에** 이 제너레이터를
-        # 재개하므로, 아래의 raise가 `except` 밖에 있어도 새 예외의 `__context__`에 이 예외가 붙는다
-        # (002 리뷰 M1에서 실측). 붙는 것 자체는 막을 수 없으니 붙는 쪽을 비운다 — 이 예외가 들고 있던
-        # 원인 예외(요청 객체를 쥔 것일 수 있다)와 트레이스백을 떼어 낸다. 문장은 고정 상수라 남아도 된다.
-        failure.__cause__ = None
-        failure.__context__ = None
-        failure.__suppress_context__ = True
-        failure.__traceback__ = None
-    except BaseException as failure:
-        _audit(call, mode, ok=False, error=type(failure).__name__, started=started)
-        raise
-    else:
-        _audit(call, mode, ok=call.refused is None, error=call.refused, started=started)
-        call._remember()
+        started = time.monotonic()
+        try:
+            yield call
+        except DoorayError as failure:
+            _audit(call, mode, ok=False, error=type(failure).__name__, started=started)
+            message = failure.message
+            # 사슬을 여기서 끊는다. `@contextmanager`는 `__exit__`가 예외를 처리하는 **도중에** 이 제너레이터를
+            # 재개하므로, 아래의 raise가 `except` 밖에 있어도 새 예외의 `__context__`에 이 예외가 붙는다
+            # (002 리뷰 M1에서 실측). 붙는 것 자체는 막을 수 없으니 붙는 쪽을 비운다 — 이 예외가 들고 있던
+            # 원인 예외(요청 객체를 쥔 것일 수 있다)와 트레이스백을 떼어 낸다. 문장은 고정 상수라 남아도 된다.
+            failure.__cause__ = None
+            failure.__context__ = None
+            failure.__suppress_context__ = True
+            failure.__traceback__ = None
+        except BaseException as failure:
+            _audit(call, mode, ok=False, error=type(failure).__name__, started=started)
+            raise
+        else:
+            _audit(call, mode, ok=call.refused is None, error=call.refused, started=started)
+            call._remember()
+        finally:
+            call._close()
     finally:
-        call._close()
+        if locked:
+            WRITE_LOCK.release()
     if message is not None:
-        raise ToolError(message)
+        raise ToolError(message)  # 잠금이 풀린 뒤에 던진다 (021 spec §2-3)
 
 
 def _audit(

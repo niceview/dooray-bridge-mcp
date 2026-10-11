@@ -395,8 +395,8 @@ class AuditHygieneTest(TransportCase):
         # 경로는 사용자 작성 텍스트일 수 있으므로 **적지 않는다.**
         transport, http = self.make(me_routes(), allow_write=True)
         with self.assertRaises(WriteNotAllowedError):
-            # 012: 완료 처리가 표에 들어왔다 — 막힌 예는 여전히 열지 않은 `move`다 (spec §10-2 #8).
-            transport.request("POST", "/project/v1/projects/10/posts/20/move", body={})
+            # 012: 완료 처리가 표에 들어왔다 — 막힌 예는 여전히 열지 않은 `/files`다(022가 `move`를 열었다) (spec §10-2 #8).
+            transport.request("POST", "/project/v1/projects/10/posts/20/files", body={})
         with self.assertRaises(errors.InvalidIdError):
             transport.request("GET", "/project/v1/posts/20/../../x?본문=비밀")
         self.assertEqual(http.requests, [])
@@ -488,7 +488,7 @@ class PathSafetyTest(TransportCase):
 
 
 class WritePathTest(TransportCase):
-    """010 spec §9-1의 W-a~W-f, 012 spec §10-1의 WP-a~WP-g — 쓰기가 허용된 전송 계층이 내보낼 수 있는 여덟 행.
+    """010 spec §9-1의 W-a~W-f, 012 spec §10-1의 WP-a~WP-g — 쓰기가 허용된 전송 계층이 내보낼 수 있는 아홉 행.
 
     거절은 **요청이 나가지 않았음**으로 증명한다(`http.requests`의 길이).
     예외 종류만 보면 "보내고 나서 거절"과 구분되지 않는다.
@@ -503,6 +503,7 @@ class WritePathTest(TransportCase):
     TO_ME = "/project/v1/projects/10/posts/20/to/me"
     TO_MEMBER = "/project/v1/projects/10/posts/20/to/40"
     DONE = "/project/v1/projects/10/posts/20/set-done"
+    MOVE = "/project/v1/projects/10/posts/20/move"  # 022 — 다른 프로젝트로 옮기기
 
     # 행마다 (동사, 경로, 통과하는 본문). 완료 처리는 본문이 없다.
     ALLOWED = (
@@ -514,6 +515,8 @@ class WritePathTest(TransportCase):
         ("POST", WORKFLOW, {"workflowId": "7"}),
         ("PUT", TO_ME, {"workflowId": "7"}),
         ("PUT", TO_MEMBER, {"workflowId": "7"}),
+        # 022: 완료 처리 앞에 둔다 — W_a가 마지막 요청(완료 처리)의 빈 본문을 본다.
+        ("POST", MOVE, {"targetProjectId": "30", "includeSubPosts": True}),
         ("POST", DONE, None),
     )
 
@@ -521,7 +524,7 @@ class WritePathTest(TransportCase):
         ok = (200, {"result": {"id": "9"}}, None)
         return {(verb, path): ok for verb, path, _ in self.ALLOWED}
 
-    def test_W_a_WP_a_the_eight_allowed_writes_go_out(self) -> None:
+    def test_W_a_WP_a_the_nine_allowed_writes_go_out(self) -> None:
         transport, http = self.make(self.allowed_routes(), allow_write=True)
         for verb, path, body in self.ALLOWED:
             transport.request(verb, path, body=body)
@@ -555,7 +558,7 @@ class WritePathTest(TransportCase):
             ("DELETE", self.PARENT),
             # 완료 처리는 표에 있지만 본문이 있으면 막힌다 (012 spec §5-2).
             ("POST", "/project/v1/projects/10/posts/20/set-done"),
-            ("POST", "/project/v1/projects/10/posts/20/move"),
+            ("POST", "/project/v1/projects/10/posts/20/files"),
             ("POST", "/project/v1/projects/10/posts/20/to/40"),
             ("POST", "/common/v1/incoming-hooks"),
         ):
@@ -578,7 +581,7 @@ class WritePathTest(TransportCase):
             ("DELETE", self.UPDATE),
             ("PATCH", self.UPDATE),
             ("PUT", self.DONE),
-            ("POST", "/project/v1/projects/10/posts/20/move"),
+            ("POST", "/project/v1/projects/10/posts/20/files"),
             ("PUT", "/project/v1/projects/10/posts/20/logs/30/reactions"),
         )
         # 본문 모양 때문이 아니라 (동사, 경로) 때문에 막힌다는 것을 보이려고 여러 본문으로 부른다.
@@ -650,7 +653,7 @@ class WritePathTest(TransportCase):
                     transport.request(verb, path, body=body)  # type: ignore[arg-type]
         self.assertEqual(http.requests, [])
 
-    def test_W_e_WP_d_a_reading_transport_refuses_all_eight(self) -> None:
+    def test_W_e_WP_d_a_reading_transport_refuses_all_nine(self) -> None:
         transport, http = self.make(self.allowed_routes())
         for verb, path, body in self.ALLOWED:
             with self.subTest(verb=verb, path=path):
@@ -661,8 +664,8 @@ class WritePathTest(TransportCase):
     def test_W_f_a_blocked_attempt_is_logged_without_the_path(self) -> None:
         transport, _ = self.make(self.allowed_routes(), allow_write=True)
         with self.assertRaises(WriteNotAllowedError):
-            # 012: 완료 처리가 표에 들어왔다 — 막힌 예는 열지 않은 `move`다 (spec §10-2 #8).
-            transport.request("POST", "/project/v1/projects/10/posts/20/move", body={})
+            # 012: 완료 처리가 표에 들어왔다 — 막힌 예는 열지 않은 `/files`다(022가 `move`를 열었다) (spec §10-2 #8).
+            transport.request("POST", "/project/v1/projects/10/posts/20/files", body={})
         line = self.audit_lines()[0]
         self.assertEqual(line["kind"], "api")
         self.assertEqual(line["method"], "POST")
@@ -724,8 +727,26 @@ class WritePathTest(TransportCase):
         transport.request("GET", self.COMMENT)
         self.assertEqual([line["comment_id"] for line in self.audit_lines()], [None, None])
 
-    def test_W_the_table_holds_exactly_eight_rows(self) -> None:
-        self.assertEqual(len(client._WRITE_PATHS), 8)
+    def test_W_the_table_holds_exactly_nine_rows(self) -> None:
+        self.assertEqual(len(client._WRITE_PATHS), 9)  # 022가 옮기기를 더해 아홉
+
+    def test_TP_1_the_move_row_is_a_full_match_on_post_only(self) -> None:
+        # 022 spec §7-1 TP-1 — 접두·동사 거절은 **통과하는 본문**으로 보낸다. 빈 본문이면 정규식을
+        # 접두 일치로 바꿔도 본문 때문에 막혀 이 검사가 아무것도 증명하지 않는다 (리뷰 M6).
+        passing = {"targetProjectId": "30", "includeSubPosts": True}
+        transport, http = self.make(self.allowed_routes(), allow_write=True)
+        transport.request("POST", self.MOVE, body=passing)
+        self.assertEqual([(row.method, row.url.path) for row in http.requests], [("POST", self.MOVE)])
+        for verb, path in (
+            ("POST", "/project/v1/projects/10/posts/20/move/40"),
+            ("POST", "/project/v1/projects/10/posts/20/move/x"),
+            ("PUT", self.MOVE),
+            ("DELETE", self.MOVE),
+        ):
+            with self.subTest(verb=verb, path=path):
+                with self.assertRaises(WriteNotAllowedError):
+                    transport.request(verb, path, body=passing)
+        self.assertEqual(len(http.requests), 1, "거절인데 요청이 나갔습니다.")
 
 
 class TransportStatusTest(TransportCase):

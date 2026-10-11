@@ -23,6 +23,8 @@ COMMENT_ID = "1000000000000000056"
 EDIT_COMMENT = f"/project/v1/projects/{PID}/posts/{POST_ID}/logs/{COMMENT_ID}"
 SET_WORKFLOW = f"/project/v1/projects/{PID}/posts/{POST_ID}/set-workflow"
 SET_DONE = f"/project/v1/projects/{PID}/posts/{POST_ID}/set-done"
+MOVE = f"/project/v1/projects/{PID}/posts/{POST_ID}/move"  # 022
+TARGET_PID = "1000000000000000190"  # 022 — 옮길 곳
 WORKFLOW_ID = "1000000000000000201"
 MEMBER_ID = "1000000000000000009"
 NEW_COMMENT_ID = "1000000000000000099"
@@ -324,6 +326,51 @@ class SetParentPostTest(WriterCase):
         made.set_parent_post(project_id=PID, post_id=POST_ID, parent_post_id=PARENT_ID)
         self.assertEqual(made.calls, 1)
         self.assertEqual(made.calls, len(http.requests))
+
+
+class MovePostWriterTest(WriterCase):
+    """022 spec §7-1의 WR-1 — 업무를 다른 프로젝트로 옮기는 요청 하나."""
+
+    def make(self):
+        moved = {"result": {"post": {"id": POST_ID}, "project": {"id": "1000000000000000999"}}}
+        return self.make_writer({("POST", MOVE): (200, moved, None)})
+
+    def test_WR_1_the_request_is_one_post_with_two_fixed_keys(self) -> None:
+        made, http = self.make()
+        result = made.move_post(project_id=PID, post_id=POST_ID, target_project_id=TARGET_PID)
+        self.assertIsNone(result)  # 응답을 읽지 않는다
+        self.assertEqual(len(http.requests), 1)
+        self.assertEqual(made.calls, 1)
+        self.assertEqual((http.requests[0].method, http.requests[0].url.path), ("POST", MOVE))
+        body = json.loads(http.requests[0].content)
+        self.assertEqual(set(body), {"targetProjectId", "includeSubPosts"})
+        self.assertEqual(body["targetProjectId"], TARGET_PID)
+        self.assertIs(body["includeSubPosts"], True)
+
+    def test_WR_1_a_bent_id_in_any_place_sends_nothing(self) -> None:
+        made, http = self.make()
+        for bent in ("30/../../x", "?", "1" * 65):
+            for place in ("project_id", "post_id", "target_project_id"):
+                ids = {"project_id": PID, "post_id": POST_ID, "target_project_id": TARGET_PID}
+                ids[place] = bent
+                with self.subTest(bent=bent, place=place):
+                    with self.assertRaises(InvalidIdError):
+                        made.move_post(**ids)
+        self.assertEqual(http.requests, [])
+        self.assertEqual(made.calls, 0)
+
+    def test_WR_1_the_same_project_is_refused_before_sending(self) -> None:
+        made, http = self.make()
+        with self.assertRaises(ValueError):
+            made.move_post(project_id=PID, post_id=POST_ID, target_project_id=PID)
+        self.assertEqual(http.requests, [])
+
+    def test_WR_1_there_is_no_argument_to_choose_the_subposts(self) -> None:
+        import inspect
+
+        names = list(inspect.signature(writer.DoorayWriter.move_post).parameters)
+        self.assertEqual(names, ["self", "project_id", "post_id", "target_project_id"])
+        self.assertEqual([name for name in names if name.startswith("include")], [])
 
 
 class WriteIdSafetyTest(WriterCase):
@@ -765,9 +812,9 @@ class WriterCallCountTest(WriterCase):
 
 
 class WriterShapeTest(WriterCase):
-    def test_criterion_26_only_the_eight_writes_and_close(self) -> None:
+    def test_criterion_26_only_the_nine_writes_and_close(self) -> None:
         # 002 C5가 읽기 전용 프로퍼티 `calls`를 더했다. 010이 쓰기 메서드를 둘 더해 셋,
-        # 012가 고치기 다섯을 더해 여덟이다 (012 spec §10-2 #27).
+        # 012가 고치기 다섯을 더해 여덟이다 (012 spec §10-2 #27). 022가 옮기기를 더해 아홉이다.
         made, _ = self.make_writer({("POST", LOGS): (200, posted(), None)})
         public = {name for name in dir(made) if not name.startswith("_")}
         writes = {
@@ -779,8 +826,9 @@ class WriterShapeTest(WriterCase):
             "set_workflow",
             "set_assignee_workflow",
             "set_done",
+            "move_post",
         }
-        self.assertEqual(len(writes), 8)
+        self.assertEqual(len(writes), 9)
         self.assertEqual(public, writes | {"close", "calls"})
         methods = {name for name in public if callable(getattr(made, name))}
         self.assertEqual(methods, writes | {"close"})

@@ -261,6 +261,28 @@ class SettingsTest(CoreTestCase):
                 os.environ["DOORAY_ENABLE_WRITE"] = value
                 self.assertIs(config.write_enabled(), expected)
 
+    def test_SW1_only_exactly_one_drops_the_ask_mark(self) -> None:
+        # 021 spec §2-1 — 부정형 스위치. 빼는 값은 `1` 하나(앞뒤 공백 무시). 그 밖은 모두 묻는다.
+        self.assertNotIn("DOORAY_SKIP_WRITE_ASK", os.environ)
+        self.assertIs(config.ask_every_write(), True)
+        asks = (
+            "", " ", "0", "true", "True", "TRUE", "yes", "on", "false",
+            "1 1", "11", "01", "１", "${user_config.skip_write_ask}",
+        )
+        for value in asks:
+            with self.subTest(value=value):
+                with mock.patch.dict(os.environ, {"DOORAY_SKIP_WRITE_ASK": value}):
+                    self.assertIs(config.ask_every_write(), True)
+        for value in ("1", " 1 ", " 1\n"):
+            with self.subTest(value=value):
+                with mock.patch.dict(os.environ, {"DOORAY_SKIP_WRITE_ASK": value}):
+                    self.assertIs(config.ask_every_write(), False)
+        # 다른 이름·설정 파일로는 빠지지 않는다 (§4 c).
+        with mock.patch.dict(os.environ, {"DOORAY_SKIP_ASK": "1"}):
+            self.assertIs(config.ask_every_write(), True)
+        self.write_settings({"skip_write_ask": "1"})
+        self.assertIs(config.ask_every_write(), True)
+
 
 class WriteAtomicTest(CoreTestCase):
     def test_write_atomic_sets_mode_and_replaces(self) -> None:
