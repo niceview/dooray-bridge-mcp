@@ -2395,13 +2395,19 @@ class SetReplyStyleTest(ServerCase):
                 tools.STYLE_NEXT,
             ],
         )
+        # 024 — 위 단언은 상수 이름으로 따라오므로 문장 자체를 따로 본다(옛 모양으로 돌아가도 통과했다, 리뷰 1 M2).
+        self.assertIn("이름표 불릿 넷", tools.STYLE_NEXT)
+        self.assertIn("따로 정해져 있습니다", tools.STYLE_NEXT)
+        self.assertNotIn("결론", tools.STYLE_NEXT)
 
     async def test_ST3_the_description_carries_the_procedure(self) -> None:
         mcp = self.build()
         description = {tool.name: tool for tool in await mcp.list_tools()}[
             "set_reply_style"
         ].description
-        for phrase in ("list_my_comments", "확인하거나 고쳐 준 뒤에만", "옮기지 않는다", "결론 한 줄 + 불릿"):
+        for phrase in ("list_my_comments", "확인하거나 고쳐 준 뒤에만", "옮기지 않는다", "이름표 불릿 넷 — 의견, 이유, 확인한 내용, 정리",
+                       # 024 리뷰 2 L-2 — 말투와 모양의 분리, 말투가 멘션 자리를 정한다(guide의 예외와 짝).
+                       "여기에는 말투만 적는다", "멘션을 두는 자리"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, description)
 
@@ -3469,7 +3475,7 @@ class MentionDescriptionTest(ServerCase):
         self.assertIn("한 번에 업무 하나", text)
         self.assertIn("등록하라고 말한 뒤에만", text)
         # N_b′ (013 spec §9-1, 완료 기준 22) — 안내문에서 빠진 초안의 모양을 흐름의 첫 도구가 이름으로 남긴다.
-        self.assertIn("결론 한 줄 + 불릿", text)
+        self.assertIn("이름표 불릿 넷(의견, 이유, 확인한 내용, 정리)", text)
 
     async def test_BA_6_the_read_side_descriptions_do_not_promise_the_mark(self) -> None:
         # 021 spec §2-9 — 표시는 등록에서 뺄 수 있다. 말투 저장 설명이 표시를 단정하지 않는다.
